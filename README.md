@@ -10,3 +10,5 @@
 - 線上對戰：開房間拿 6 碼房號，朋友輸入房號加入（電腦版和網頁版可以互打）
 
 角色、卡名、美術全部原創（美術由 AI 生成，音效音樂由程式合成）。
+
+原始碼在 [`source/`](source/)（Godot 4.7）。線上對戰要自己建 Firebase 專案，並把 `config/online.example.cfg` 複製成 `online.cfg` 填入設定。
