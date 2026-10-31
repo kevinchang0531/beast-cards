@@ -37,6 +37,11 @@ BEASTS = {
     "b_bouldergolem": "a huge rock golem made of stacked boulders with glowing orange cracks and massive fists, mountain cliff background",
     "b_crystaliz": "a small lizard with purple crystal spikes along its back and sparkly eyes, glittering cave background",
     "b_geodrake": "a powerful dragon armored with giant purple and teal crystals, roaring, crystal cavern background",
+    "b_solarfox": "a divine celestial fire fox with a radiant golden solar corona halo, long tails of white-hot plasma, floating above the sun's surface, solar flare background",
+    "b_seasovereign": "a regal otter emperor in shining coral and pearl armor wielding a great sword of flowing water, towering tsunami behind it, stormy ocean background",
+    "b_petalqueen": "a graceful queen hare in a gown of living flower petals with a tall blossom crown and a vine scepter, whirlwind of petals, enchanted royal garden background",
+    "b_tempestroc": "a colossal mythical thunderbird with vast storm-cloud wings, feathers of pure lightning and a golden crest, flying through a towering thunderhead background",
+    "b_peaktitan": "an enormous mountain titan creature whose shoulders are snowy peaks, a body of layered rock and glowing magma veins, clouds around it, epic mountain range background",
 }
 ENERGY = {
     "e_fire": "a glowing orb of pure fire energy with swirling flames, magical emblem, deep red background",

@@ -891,6 +891,7 @@ func _filter_ok(id: String) -> bool:
 
 
 ## 依收藏自動組一副：挑擁有最多靈獸的兩種屬性；60 張時每種卡的張數都放大兩倍
+## 每條進化線依基礎 3、一階 2、二階 1 張放
 func _auto_deck(n := CardDB.DECK_SIZE) -> Array:
 	var k_n := n / CardDB.DECK_SIZE
 	var score := {}
@@ -905,7 +906,7 @@ func _auto_deck(n := CardDB.DECK_SIZE) -> Array:
 	for t in types.slice(0, 2):
 		for line in CardDB.LINES[t]:
 			for id in line:
-				for i in mini(int(profile.collection.get(id, 0)), (3 if CardDB.BEASTS[id].stage == 0 else 2) * k_n):
+				for i in mini(int(profile.collection.get(id, 0)), (3 - CardDB.BEASTS[id].stage) * k_n):
 					if d.size() < 14 * k_n:
 						d.append(id)
 	for id in ["potion", "finder", "journal", "scroll", "whistle", "notes", "band", "bell", "recycle"]:
@@ -1090,7 +1091,7 @@ func _draw_card_form(f: Control) -> void:
 	_spin(f, Rect2(284, 68, 192, 40), 10, 300, 10, int(c.hp), func(v): set_card("hp", v))
 	var froms: Array = [""]
 	for id in CardDB.BEASTS:
-		if id != edit_card and CardDB.BEASTS[id].stage == 0:
+		if id != edit_card and CardDB.BEASTS[id].stage <= 1:
 			froms.append(id)
 	_label(f, "進化自", Vector2(14, 132), 18)
 	_opt(f, Rect2(84, 124, 212, 40), froms.map(func(id): return "基礎靈獸" if id == "" else CardDB.card_name(id)),

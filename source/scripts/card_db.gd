@@ -1,6 +1,6 @@
 class_name CardDB
 extends RefCounted
-## 全部卡片資料：20 種靈獸、5 種能量、9 種訓練家卡，以及起始牌組與電腦對手牌組。
+## 全部卡片資料：25 種靈獸（含 5 種二階進化）、5 種能量、9 種訓練家卡，以及起始牌組與電腦對手牌組。
 ## BEASTS／ENERGY／TRAINERS 是「內建卡＋玩家匯入的自製卡」，自製卡由 SaveDB 讀檔後呼叫 set_custom() 加進來。
 ## 屬性相剋（箭頭左邊打右邊兩倍傷害）：火 → 草 → 岩 → 雷 → 水 → 火
 
@@ -78,6 +78,21 @@ const BASE_BEASTS := {
 	"geodrake": {"name": "晶甲龍", "type": "rock", "stage": 1, "from": "crystaliz", "hp": 130, "retreat": 3, "attacks": [
 		{"name": "水晶飛彈", "cost": ["rock", "any"], "dmg": 40, "fx": "snipe", "v": 30},
 		{"name": "晶甲咆哮", "cost": ["rock", "rock", "any"], "dmg": 90}]},
+	"solarfox": {"name": "日冕天狐", "type": "fire", "stage": 2, "from": "blazecrown", "hp": 170, "retreat": 2, "attacks": [
+		{"name": "日珥連擊", "cost": ["fire", "any"], "dmg": 60, "fx": "burn"},
+		{"name": "太陽風暴", "cost": ["fire", "fire", "fire", "any"], "dmg": 160, "fx": "self_discard", "v": 2}]},
+	"seasovereign": {"name": "滄海劍皇", "type": "water", "stage": 2, "from": "tideblade", "hp": 160, "retreat": 2, "attacks": [
+		{"name": "潮汐斬", "cost": ["water", "any"], "dmg": 60, "fx": "para_flip"},
+		{"name": "怒海狂濤", "cost": ["water", "water", "any", "any"], "dmg": 110, "fx": "energy_plus", "v": 20}]},
+	"petalqueen": {"name": "百花兔后", "type": "leaf", "stage": 2, "from": "bloomhare", "hp": 160, "retreat": 1, "attacks": [
+		{"name": "春之祝福", "cost": ["leaf", "any"], "dmg": 50, "fx": "heal", "v": 40},
+		{"name": "萬花天舞", "cost": ["leaf", "leaf", "any", "any"], "dmg": 130, "fx": "bench", "v": 10}]},
+	"tempestroc": {"name": "天雷神鵬", "type": "thunder", "stage": 2, "from": "stormtalon", "hp": 150, "retreat": 0, "attacks": [
+		{"name": "連環落雷", "cost": ["thunder", "any"], "dmg": 60, "fx": "flip_plus", "v": 40},
+		{"name": "九天雷劫", "cost": ["thunder", "thunder", "any", "any"], "dmg": 150, "fx": "self_discard", "v": 2}]},
+	"peaktitan": {"name": "山岳巨神", "type": "rock", "stage": 2, "from": "bouldergolem", "hp": 200, "retreat": 4, "attacks": [
+		{"name": "地裂拳", "cost": ["rock", "any"], "dmg": 70, "fx": "snipe", "v": 20},
+		{"name": "崩天裂地", "cost": ["rock", "rock", "any", "any"], "dmg": 170, "fx": "recoil", "v": 30}]},
 }
 
 const BASE_ENERGY := {
@@ -109,13 +124,13 @@ const MAX_COST := 4
 const BENCH_MAX := 4
 const STARS_TO_WIN := 3
 
-## 每種屬性的兩條進化線（基礎, 進化）
+## 每種屬性的兩條進化線（基礎, 一階, 第一條還有二階）
 const LINES := {
-	"fire": [["embertail", "blazecrown"], ["cindrake", "infernadrake"]],
-	"water": [["bubbotter", "tideblade"], ["jellume", "abysslume"]],
-	"leaf": [["sproutbun", "bloomhare"], ["mushlet", "oakwarden"]],
-	"thunder": [["zapwing", "stormtalon"], ["voltbug", "magbeetle"]],
-	"rock": [["pebblet", "bouldergolem"], ["crystaliz", "geodrake"]],
+	"fire": [["embertail", "blazecrown", "solarfox"], ["cindrake", "infernadrake"]],
+	"water": [["bubbotter", "tideblade", "seasovereign"], ["jellume", "abysslume"]],
+	"leaf": [["sproutbun", "bloomhare", "petalqueen"], ["mushlet", "oakwarden"]],
+	"thunder": [["zapwing", "stormtalon", "tempestroc"], ["voltbug", "magbeetle"]],
+	"rock": [["pebblet", "bouldergolem", "peaktitan"], ["crystaliz", "geodrake"]],
 }
 
 const STARTER_NAME := {"fire": "烈焰起始牌組", "water": "激流起始牌組", "leaf": "森林起始牌組",
@@ -165,12 +180,25 @@ static func set_custom(cards: Dictionary, art_dir: String) -> void:
 				TRAINERS[id] = {"name": str(c.name), "kind": base.kind, "target": base.target, "text": base.text, "effect": effect}
 			_:
 				BEASTS[id] = compile_beast(c)
-	# 進化來源可能是自製卡，全部登記完才檢查得到
+	# 進化來源可能是自製卡，全部登記完才算得出階段；來源不見、繞圈或超過二階就當基礎靈獸
 	for id in cards:
-		if BEASTS.has(id) and BEASTS[id].stage == 1:
-			var f: String = BEASTS[id].from
-			if f == id or not BEASTS.has(f) or BEASTS[f].stage != 0:
-				BEASTS[id].stage = 0
+		if BEASTS.has(id) and _chain_stage(id) < 0:
+			BEASTS[id].from = ""
+	for id in cards:
+		if BEASTS.has(id):
+			BEASTS[id].stage = _chain_stage(id)
+
+
+## 往回數進化來源：基礎 0、一階 1、二階 2；不合法回傳 -1
+static func _chain_stage(id: String) -> int:
+	var d := 0
+	var cur := id
+	while str(BEASTS[cur].get("from", "")) != "":
+		cur = BEASTS[cur].from
+		d += 1
+		if d > 2 or not BEASTS.has(cur):
+			return -1
+	return d
 
 
 static func _safe_type(t) -> String:
@@ -273,7 +301,7 @@ static func avatar_path(a: String) -> String:
 ## 稀有度：0 普通、1 不普通、2 稀有（卡包抽卡用）
 static func rarity(id: String) -> int:
 	if BEASTS.has(id):
-		return 2 if BEASTS[id].stage == 1 else 0
+		return 2 if BEASTS[id].stage >= 1 else 0
 	if TRAINERS.has(id):
 		return 1
 	return 0
@@ -311,7 +339,7 @@ static func deck_by_name(n: String) -> Array:
 			d += ["blazecrown", "blazecrown", "infernadrake", "infernadrake"]
 			for i in 12:
 				d.append("e_fire")
-			return d + ["potion", "finder", "finder", "notes", "band", "band", "journal", "recycle"]
+			return d + ["potion", "finder", "finder", "notes", "band", "solarfox", "journal", "recycle"]
 	return starter("fire")
 
 

@@ -310,6 +310,74 @@ func _test_new_features() -> void:
 	await get_tree().process_frame
 	await shot("27_battle_custom")
 	check(main.profile.current_match is Dictionary, "自製牌組可以開打")
+	# --- 二階進化 ---
+	var chain := ["embertail", "blazecrown", "solarfox"]
+	check(CardDB.BEASTS.solarfox.stage == 2 and CardDB.BEASTS.solarfox.from == "blazecrown", "內建二階靈獸")
+	var dk2: Array = []
+	for i in 3:
+		dk2 += chain
+	for i in 21:
+		dk2.append("e_fire")
+	var bt := Battle.new()
+	bt.setup(7, dk2, CardDB.starter("rock"), "我", "電腦")
+	var pl: Dictionary = bt.players[0]
+	bt.turn = 5
+	bt.current = 0
+	pl.hand = []
+	for id in chain:
+		pl.hand.append(dk2.find(id))
+	pl.active = bt._new_beast(dk2.find("embertail") + 3)
+	pl.active.turn_played = 1
+	pl.hand.erase(dk2.find("embertail"))
+	var evolves := func() -> Array:
+		return bt.legal_actions(0).filter(func(a): return a.t == "evolve")
+	check(evolves.call().size() == 1 and bt.card_id(pl.hand[evolves.call()[0].hand]) == "blazecrown", "基礎只能進化成一階，不能跳到二階")
+	check(bt.apply(evolves.call()[0]) and bt.beast_data(pl.active).stage == 1, "進化成一階")
+	check(evolves.call().is_empty(), "剛進化的那回合不能再進化")
+	bt.turn = 7
+	check(evolves.call().size() == 1 and bt.apply(evolves.call()[0]) and bt.beast_data(pl.active).stage == 2, "下個回合進化成二階")
+	check(pl.active.stack.size() == 2, "二階疊了兩張進化前的卡")
+	var reached := 0
+	var replay_ok := true
+	for g in 30:
+		var ab := Battle.new()
+		ab.setup(500 + g, dk2, CardDB.deck_by_name("drake"), "我", "電腦")
+		var guard2 := 0
+		while ab.winner < 0 and guard2 < 3000:
+			guard2 += 1
+			var a2 := BattleAI.choose(ab, ab.actor(), 3, rng)
+			if a2.is_empty() or not ab.apply(a2):
+				break
+			if ab.players[0].active != null and ab.beast_data(ab.players[0].active).stage == 2:
+				reached += 1
+				var rp := Battle.from_save(ab.to_save())
+				replay_ok = replay_ok and rp.beast_data(rp.players[0].active).stage == 2
+				break
+	check(reached > 0, "電腦會打出二階進化（30 場有 %d 場）" % reached)
+	check(replay_ok, "二階進化存檔重播後狀態一致")
+	var ko := Battle.new()
+	ko.setup(9, dk2, CardDB.starter("rock"), "我", "電腦")
+	var ko_p: Dictionary = ko.players[0]
+	ko_p.active = ko._new_beast(2)
+	ko_p.active.stack = [0, 1]
+	ko_p.active.dmg = 999
+	ko_p.discard = []
+	ko_p.bench = [ko._new_beast(3)]
+	ko._check_kos(1)
+	check(ko_p.discard.size() >= 3 and ko_p.discard.has(0) and ko_p.discard.has(1) and ko_p.discard.has(2), "二階被擊倒時三張卡都進棄牌區")
+	# 自製卡：可以接在一階後面；繞圈、三階都會變回基礎
+	var saved_cards: Dictionary = main.db.library.cards.duplicate(true)
+	var cc := {"x2": {"kind": "beast", "name": "接二階", "type": "fire", "hp": 100, "retreat": 1, "from": "blazecrown", "attacks": []},
+		"x3": {"kind": "beast", "name": "三階", "type": "fire", "hp": 100, "retreat": 1, "from": "solarfox", "attacks": []},
+		"a1": {"kind": "beast", "name": "甲", "type": "fire", "hp": 100, "retreat": 1, "from": "a2", "attacks": []},
+		"a2": {"kind": "beast", "name": "乙", "type": "fire", "hp": 100, "retreat": 1, "from": "a1", "attacks": []},
+		"m1": {"kind": "beast", "name": "一階", "type": "fire", "hp": 100, "retreat": 1, "from": "embertail", "attacks": []},
+		"m2": {"kind": "beast", "name": "二階", "type": "fire", "hp": 100, "retreat": 1, "from": "m1", "attacks": []}}
+	CardDB.set_custom(cc, main.db.custom_dir())
+	check(CardDB.BEASTS.x2.stage == 2 and CardDB.BEASTS.m2.stage == 2 and CardDB.BEASTS.m1.stage == 1, "自製卡二階進化")
+	check(CardDB.BEASTS.x3.stage == 0 and CardDB.BEASTS.x3.from == "", "超過二階變回基礎")
+	check(CardDB.BEASTS.a1.stage + CardDB.BEASTS.a2.stage <= 1, "進化繞圈不會當掉")
+	CardDB.set_custom(saved_cards, main.db.custom_dir())
 	# --- 刪除卡包 ---
 	main.delete_pack(pack)
 	check(not CardDB.known(ids[0]) and main.profile.decks[0].cards.size() == 30 - 18, "刪除卡包後牌組移除自製卡")

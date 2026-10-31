@@ -181,7 +181,7 @@ func _draw_full() -> void:
 		if art:
 			draw_texture_rect(art, Rect2(12, 34, 176, 112), false)
 		draw_rect(Rect2(12, 34, 176, 112), fc.darkened(0.4), false, 2)
-		var stage: String = "基礎靈獸" if bd.stage == 0 else "進化自 " + CardDB.BEASTS[bd.from].name
+		var stage: String = "基礎靈獸" if bd.stage == 0 else "%s階進化自 %s" % ["一" if bd.stage == 1 else "二", CardDB.BEASTS[bd.from].name]
 		draw_rect(Rect2(12, 148, 176, 15), Color(1, 1, 1, 0.5))
 		_text(stage, Vector2(16, 160), 170, 10, Color("333333"))
 		var y := 168.0
