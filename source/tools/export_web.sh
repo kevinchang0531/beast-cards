@@ -20,5 +20,6 @@ test -f "$TMP/web/index.wasm" || { echo "匯出失敗，看 $TMP/export.log"; ex
 rm -rf build/web
 mkdir -p build/web
 cp "$TMP"/web/* build/web/
+cp web/manifest.webmanifest build/web/
 touch build/.gdignore
 ls -la build/web

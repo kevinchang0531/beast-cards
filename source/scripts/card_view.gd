@@ -7,9 +7,12 @@ extends Control
 
 signal pressed(view: CardView)
 signal hovered(view: CardView)
+signal unhovered(view: CardView)
 
 const BASE := Vector2(200, 280)
 const TRAINER_COLOR := Color("8a6cc8")
+const HOLD_MS := 400
+const TAP_SLOP := 12.0
 
 var id := ""
 var mode := "full"
@@ -22,19 +25,35 @@ var dim := false
 var count_label := ""         # 右上角張數（牌組編輯用）
 var shake := 0.0
 var flash := 0.0
+## 牌組編輯用：滑鼠移上去只預覽、放開才算點；手指點一下加入、按住預覽、拖動是捲動
+var tap_mode := false
+var down_ms := 0
+var down_pos := Vector2.ZERO
+var down_touch := false
+var holding := false
+var hover_sent := false
 
 static var _tex_cache := {}
 
 
 static func tex(path: String) -> Texture2D:
 	if not _tex_cache.has(path):
-		_tex_cache[path] = load(path) if ResourceLoader.exists(path) else null
+		if path.begins_with("user://"):
+			var img: Image = Image.load_from_file(path) if FileAccess.file_exists(path) else null
+			_tex_cache[path] = ImageTexture.create_from_image(img) if img else null
+		else:
+			_tex_cache[path] = load(path) if ResourceLoader.exists(path) else null
 	return _tex_cache[path]
 
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	mouse_entered.connect(func(): hovered.emit(self))
+	mouse_entered.connect(func():
+		if not tap_mode:
+			hovered.emit(self))
+	mouse_exited.connect(func():
+		hover_sent = false
+		unhovered.emit(self))
 
 
 func setup(card_id: String, m := "full", up := true) -> CardView:
@@ -45,13 +64,45 @@ func setup(card_id: String, m := "full", up := true) -> CardView:
 	return self
 
 
+func use_tap_mode() -> void:
+	tap_mode = true
+	mouse_filter = Control.MOUSE_FILTER_PASS   # 事件要傳給外層，手指才能捲動
+
+
+func _tap_input(e: InputEvent) -> void:
+	if e is InputEventMouseMotion:
+		if e.device != InputEvent.DEVICE_ID_EMULATION and not hover_sent:
+			hover_sent = true
+			hovered.emit(self)
+		elif down_ms > 0 and e.global_position.distance_to(down_pos) > TAP_SLOP:
+			down_ms = 0
+	elif e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
+		if e.pressed:
+			down_ms = Time.get_ticks_msec()
+			down_pos = e.global_position
+			down_touch = e.device == InputEvent.DEVICE_ID_EMULATION
+		else:
+			if holding:
+				unhovered.emit(self)
+			elif down_ms > 0:
+				pressed.emit(self)
+			down_ms = 0
+			holding = false
+
+
 func _gui_input(e: InputEvent) -> void:
+	if tap_mode:
+		_tap_input(e)
+		return
 	if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 		pressed.emit(self)
 		accept_event()
 
 
 func _process(delta: float) -> void:
+	if down_touch and down_ms > 0 and not holding and Time.get_ticks_msec() - down_ms >= HOLD_MS:
+		holding = true
+		hovered.emit(self)
 	if shake > 0 or flash > 0:
 		shake = maxf(0.0, shake - delta * 2.5)
 		flash = maxf(0.0, flash - delta * 2.0)

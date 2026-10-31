@@ -65,18 +65,6 @@ func start(battle: Battle, my_index: int, o: Dictionary) -> void:
 # ---------- 建立介面 ----------
 
 func _build() -> void:
-	var bg := TextureRect.new()
-	bg.texture = CardView.tex("res://assets/images/ui/bg_battle.png")
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bg)
-	var shade := ColorRect.new()
-	shade.color = Color(0, 0, 0, 0.25)
-	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(shade)
-
 	for pi in 2:
 		var who := 1 - me if pi == 0 else me
 		var box := _panel(Rect2(8, 8 if pi == 0 else 512, 184, 200))
@@ -84,7 +72,7 @@ func _build() -> void:
 		av.position = Vector2(8, 8)
 		av.size = Vector2(64, 64)
 		av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		av.texture = CardView.tex("res://assets/images/avatars/%s.png" % str(opts.get("my_avatar" if who == me else "opp_avatar", "av_boy")))
+		av.texture = CardView.tex(CardDB.avatar_path(str(opts.get("my_avatar" if who == me else "opp_avatar", "av_boy"))))
 		box.add_child(av)
 		var nm := _label(b.names[who], Vector2(76, 10), 15, Vector2(106, 24))
 		nm.clip_text = true

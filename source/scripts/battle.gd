@@ -5,7 +5,7 @@ extends RefCounted
 ## - 存檔只要存 {seed, decks, names, history}，讀檔時重播一遍就回到原狀態
 ## - 線上對戰兩邊各跑一份引擎，只互傳「動作」，畫面就會同步
 ##
-## 規則摘要：牌組 30 張、起手 7 張（沒有基礎靈獸就重洗）；每回合抽 1 張、附加 1 個能量、支援卡 1 張、撤退 1 次；
+## 規則摘要：牌組 30 或 60 張、起手 7 張（沒有基礎靈獸就重洗）；每回合抽 1 張、附加 1 個能量、支援卡 1 張、撤退 1 次；
 ## 先攻玩家第一回合不能攻擊；雙方第一回合都不能進化；攻擊後回合結束；擊倒一隻得 1 顆星徽，先拿 3 顆獲勝；
 ## 對手場上沒有靈獸、或輪到自己時牌組抽光也算輸。
 ## 位置編號 slot：0 = 戰鬥位置，1～4 = 後備第 1～4 隻。
@@ -221,7 +221,7 @@ func _trainer_targets(pi: int, id: String) -> Array:
 	var tr: Dictionary = CardDB.TRAINERS[id]
 	if tr.kind == "support" and p.support_used:
 		return []
-	match id:
+	match CardDB.effect_of(id):
 		"potion":
 			var out: Array = []
 			for s in 1 + p.bench.size():
@@ -359,7 +359,7 @@ func _play_trainer(pi: int, id: String, slot: int) -> void:
 		p.support_used = true
 	_log("%s 使用了 %s。" % [names[pi], tr.name])
 	events.append({"e": "trainer", "p": pi, "id": id})
-	match id:
+	match CardDB.effect_of(id):
 		"potion":
 			var b: Dictionary = beast_at(pi, slot)
 			_heal(pi, b, 30)

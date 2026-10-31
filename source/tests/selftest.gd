@@ -19,6 +19,8 @@ func _ready() -> void:
 	if da and da.dir_exists("test_saves"):
 		for f in DirAccess.get_files_at(test_dir):
 			DirAccess.remove_absolute(test_dir + "/" + f)
+		for f in DirAccess.get_files_at(test_dir + "/custom"):
+			DirAccess.remove_absolute(test_dir + "/custom/" + f)
 	main = load("res://scenes/main.tscn").instantiate()
 	main.db = SaveDB.new(test_dir)
 	add_child(main)
@@ -152,11 +154,11 @@ func _run() -> void:
 	await get_tree().process_frame
 	var full := true
 	for id in CardDB.BEASTS.keys() + CardDB.TRAINERS.keys():
-		full = full and int(main.profile.collection.get(id, 0)) >= CardDB.MAX_COPIES
-	check(full, "全部卡片補到 %d 張" % CardDB.MAX_COPIES)
+		full = full and int(main.profile.collection.get(id, 0)) >= CardDB.max_copies(60)
+	check(full, "全部卡片補到 %d 張" % CardDB.max_copies(60))
 	check(SaveDB.fill_collection(main.profile) == 0, "再補一次不會多加")
 	reloaded = main.db.load_profile("測試小明")
-	check(int(reloaded.collection.get(CardDB.BEASTS.keys()[0], 0)) == CardDB.MAX_COPIES, "補齊有存檔")
+	check(int(reloaded.collection.get(CardDB.BEASTS.keys()[0], 0)) == CardDB.max_copies(60), "補齊有存檔")
 	main.db.new_profile("別人", "av_boy", "fire")
 	check(not main.rename_player("別人"), "不能改成別人的名字")
 	check(not main.rename_player("  "), "不能改成空白")
@@ -169,12 +171,169 @@ func _run() -> void:
 	main.resume_match()
 	await get_tree().process_frame
 	check(_find_ui().b.names[0] == "新名字", "改名後能繼續對戰")
+	await _test_new_features()
+
+
+## 玩家資料、30／60 張牌組、匯入卡包、舊存檔相容
+func _test_new_features() -> void:
+	# --- 舊版存檔：沒有 title、bio、deck_size ---
+	var old := {"name": "舊存檔", "avatar": "av_kid", "coins": 777, "collection": {"embertail": 2, "e_fire": 99},
+		"decks": [{"name": "舊牌組", "cards": CardDB.starter("fire")}], "active_deck": 0,
+		"stats": {"games": 9, "wins": 5, "losses": 4, "kos": 12, "packs": 3, "online_games": 0, "online_wins": 0},
+		"beaten": {"mia": 2}, "history": [{"date": "2026-10-30", "mode": "ai", "opp": "米亞", "won": true, "turns": 9, "stars": 3}],
+		"current_match": null, "created": "2026-10-30", "updated": "2026-10-30"}
+	var f := FileAccess.open(main.db._path("舊存檔"), FileAccess.WRITE)
+	f.store_string(JSON.stringify(old))
+	f.close()
+	main.load_and_menu("舊存檔")
+	var p: Dictionary = main.profile
+	check(p.coins == 777 and p.stats.wins == 5 and p.beaten.mia == 2 and p.history.size() == 1, "舊存檔資料全部保留")
+	check(p.decks[0].deck_size == 30 and p.decks[0].cards.size() == 30 and p.title == "", "舊存檔補上新欄位，牌組還是 30 張")
+	await shot("17_menu_new")
+
+	# --- 玩家資料 ---
+	main.show_profile()
+	await shot("18_profile")
+	var img := Image.create(300, 200, false, Image.FORMAT_RGBA8)
+	img.fill(Color.RED)
+	var av: String = main.db.save_avatar(img)
+	check(av != "" and CardView.tex(av) != null and CardView.tex(av).get_width() == SaveDB.AVATAR_SIZE, "上傳頭像裁成正方形")
+	check(not main.save_profile_info("別人", "x", "y", av), "玩家資料不能改成別人的名字")
+	check(main.profile.title == "", "名字失敗時其他欄位不變")
+	check(main.save_profile_info("舊存檔", "冠軍", "你好", av), "儲存玩家資料")
+	var r: Dictionary = main.db.load_profile("舊存檔")
+	check(r.title == "冠軍" and r.bio == "你好" and r.avatar == av, "玩家資料有存檔")
+	main.show_menu()
+	await shot("19_menu_avatar")
+
+	# --- 60 張牌組 ---
+	SaveDB.fill_collection(main.profile)
+	var d60: Array = main._auto_deck(60)
+	check(d60.size() == 60 and CardDB.validate_deck(d60, 60) == "", "自動組 60 張合法：" + CardDB.validate_deck(d60, 60))
+	check(CardDB.validate_deck(d60, 30) != "", "60 張不能當 30 張用")
+	main.show_deck_editor()
+	await get_tree().process_frame
+	_find_button(main.screen, "60 張").pressed.emit()
+	await get_tree().process_frame
+	check(main.edit_size == 60, "牌組編輯切到 60 張")
+	main.edit_deck = d60.duplicate()
+	_find_button(main.screen, "儲存並使用").pressed.emit()
+	r = main.db.load_profile("舊存檔")
+	check(r.decks[0].deck_size == 60 and r.decks[0].cards.size() == 60, "60 張牌組有存檔")
+	main.start_ai_match(0)
+	await get_tree().process_frame
+	var ui := _find_ui()
+	check(ui != null and ui.b.decks[0].size() == 60 and ui.b.decks[1].size() == 60, "60 張對戰：電腦牌組也是 60 張")
+	check(ui.b.players[0].deck.size() + ui.b.players[0].hand.size() >= 52, "60 張對戰發牌正常")
+	await shot("20_battle_60")
+	ui._finish({"paused": true})
+	await get_tree().process_frame
+
+	# --- 牌組編輯：滑過放大、點了才加入 ---
+	main.show_deck_editor()
+	await get_tree().process_frame
+	main.edit_deck = []
+	main._draw_editor_lists(main.screen)
+	await get_tree().process_frame
+	var cv := _find_card(main.screen.get_node("coll"))
+	cv.hovered.emit(cv)
+	check(main.preview.visible and main.preview.id == cv.id and main.edit_deck.is_empty(), "滑過卡片會放大、不會加入")
+	await shot("21_deck_preview")
+	cv.unhovered.emit(cv)
+	check(not main.preview.visible, "移開就關掉放大")
+	cv.pressed.emit(cv)
+	check(main.edit_deck == [cv.id], "點一下才加入")
+
+	# --- 匯入卡包 ---
+	main.show_import()
+	await shot("22_import_empty")
+	var pack: Dictionary = main.import_example()
+	await shot("23_pack_edit")
+	var ids: Array = pack.cards
+	check(ids.size() == 5 and CardDB.is_beast(ids[0]) and CardDB.is_trainer(ids[3]) and CardDB.is_energy(ids[4]), "範例卡包有靈獸、訓練家、能量")
+	check(CardDB.BEASTS[ids[1]].stage == 1 and CardDB.BEASTS[ids[1]].from == ids[0], "自製進化線")
+	check(CardView.tex(CardDB.art_path(ids[0])) != null, "自製卡圖讀得到")
+	check(int(main.profile.collection[ids[0]]) == 3, "匯入者拿到 3 張")
+	main.edit_card = ids[2]
+	main.set_card("hp", 200)
+	main.set_card("type", "thunder")
+	main.set_card("attacks", [{"name": "雷擊", "dmg": 70, "n_type": 2, "n_any": 1, "fx": "para_flip", "v": 0}, {"name": "", "dmg": 0, "n_type": 0, "n_any": 0, "fx": "", "v": 0}])
+	var bd: Dictionary = CardDB.BEASTS[ids[2]]
+	check(bd.hp == 200 and bd.type == "thunder" and bd.attacks.size() == 1 and bd.attacks[0].cost == ["thunder", "thunder", "any"], "設定卡片屬性")
+	main.show_pack_editor(pack, ids[3])
+	await shot("24_pack_trainer")
+	main.show_pack_editor(pack, ids[4])
+	await shot("25_pack_energy")
+	main.show_pack_editor(pack, ids[1])
+	await get_tree().process_frame
+	main.db.load_library()
+	check(CardDB.BEASTS[ids[2]].hp == 200, "卡片設定有寫進檔案，重新讀檔還在")
+	check(CardDB.BEASTS[ids[1]].attacks[1].fx == "burn" and typeof(CardDB.BEASTS[ids[1]].hp) == TYPE_INT, "讀檔後數字是整數")
+	main.show_shop()
+	await shot("26_shop_packs")
+	check(SaveDB.open_custom_pack(pack, rng).size() == 5, "自製卡包抽 5 張")
+	var std := true
+	for i in 30:
+		for id in SaveDB.open_pack(rng):
+			std = std and not CardDB.is_custom(id)
+	check(std, "標準卡包不會抽到自製卡")
+
+	# --- 自製卡實戰：雙方 AI 打完一場 ---
+	var deck: Array = []
+	for id in [ids[0], ids[1], ids[2], ids[3]]:
+		for i in 3:
+			deck.append(id)
+	for i in 6:
+		deck.append(ids[4])
+		deck.append("e_thunder")
+	for i in 3:
+		deck += ["embertail", "e_fire"]
+	check(CardDB.validate_deck(deck) == "", "自製牌組合法：" + CardDB.validate_deck(deck))
+	var games := 0
+	for g in 20:
+		var b := Battle.new()
+		b.setup(1000 + g, deck, CardDB.starter("rock"), "我", "電腦")
+		var guard := 0
+		while b.winner < 0 and guard < 3000:
+			guard += 1
+			var who := b.actor()
+			var a := BattleAI.choose(b, who, 2, rng)
+			if a.is_empty() or not b.apply(a):
+				break
+		games += 1 if b.winner >= 0 else 0
+	check(games == 20, "自製卡對戰 20 場都打完（%d）" % games)
+
+	main.profile.decks[0].cards = deck
+	main.profile.decks[0].deck_size = 30
+	check(main._online_error() != "", "線上對戰擋自製卡")
+	main.start_ai_match(0)
+	await get_tree().process_frame
+	await shot("27_battle_custom")
+	check(main.profile.current_match is Dictionary, "自製牌組可以開打")
+	# --- 刪除卡包 ---
+	main.delete_pack(pack)
+	check(not CardDB.known(ids[0]) and main.profile.decks[0].cards.size() == 30 - 18, "刪除卡包後牌組移除自製卡")
+	check(main.profile.current_match == null, "用到被刪卡片的對戰會放棄、不會當掉")
+	check(not main.profile.collection.has(ids[0]), "收藏也清掉")
+	main.show_menu()
+	main.show_deck_editor()
+	await shot("28_deck_after_delete")
 
 
 func _find_ui() -> BattleUI:
 	for n in main.screen.get_children():
 		if n is BattleUI:
 			return n
+	return null
+
+
+func _find_card(root: Node) -> CardView:
+	for c in root.get_children():
+		if c is CardView:
+			return c
+		var r := _find_card(c)
+		if r:
+			return r
 	return null
 
 

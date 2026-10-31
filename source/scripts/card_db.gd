@@ -1,6 +1,7 @@
 class_name CardDB
 extends RefCounted
 ## 全部卡片資料：20 種靈獸、5 種能量、9 種訓練家卡，以及起始牌組與電腦對手牌組。
+## BEASTS／ENERGY／TRAINERS 是「內建卡＋玩家匯入的自製卡」，自製卡由 SaveDB 讀檔後呼叫 set_custom() 加進來。
 ## 屬性相剋（箭頭左邊打右邊兩倍傷害）：火 → 草 → 岩 → 雷 → 水 → 火
 
 const TYPES := ["fire", "water", "leaf", "thunder", "rock"]
@@ -16,7 +17,7 @@ const BEATS := {"fire": "leaf", "leaf": "rock", "rock": "thunder", "thunder": "w
 ## burn 灼傷、para 麻痺、para_flip 擲硬幣正面麻痺、heal 自己回復 v、bench 對手每隻後備 v 傷害、
 ## flip_plus 擲硬幣正面多 v、energy_plus 每多一個能量多 v（最多 2 個）、self_discard 自己丟 v 個能量、
 ## recoil 自己受 v 傷害、snipe 對手 HP 最低的後備 v 傷害、power_up 從牌組找 1 張同屬性能量附到後備、draw 抽 v 張
-const BEASTS := {
+const BASE_BEASTS := {
 	"embertail": {"name": "焰尾狐", "type": "fire", "stage": 0, "hp": 60, "retreat": 1, "attacks": [
 		{"name": "撲咬", "cost": ["any"], "dmg": 10},
 		{"name": "火花", "cost": ["fire", "any"], "dmg": 30}]},
@@ -79,7 +80,7 @@ const BEASTS := {
 		{"name": "晶甲咆哮", "cost": ["rock", "rock", "any"], "dmg": 90}]},
 }
 
-const ENERGY := {
+const BASE_ENERGY := {
 	"e_fire": {"name": "火能量", "type": "fire"},
 	"e_water": {"name": "水能量", "type": "water"},
 	"e_leaf": {"name": "草能量", "type": "leaf"},
@@ -89,7 +90,7 @@ const ENERGY := {
 
 ## kind：item 道具（每回合不限張）／support 支援（每回合 1 張）
 ## target：none 不用選、mine 選自己場上一隻、bench 選自己後備一隻
-const TRAINERS := {
+const BASE_TRAINERS := {
 	"potion": {"name": "回復藥", "kind": "item", "target": "mine", "text": "自己場上一隻靈獸回復 30 HP。"},
 	"finder": {"name": "能量探測器", "kind": "item", "target": "none", "text": "從牌組找 1 張能量卡加入手牌。"},
 	"whistle": {"name": "換位哨", "kind": "item", "target": "bench", "text": "戰鬥位置的靈獸和一隻後備靈獸交換（不用撤退能量）。"},
@@ -102,7 +103,9 @@ const TRAINERS := {
 }
 
 const DECK_SIZE := 30
+const DECK_SIZES := [30, 60]
 const MAX_COPIES := 3
+const MAX_COST := 4
 const BENCH_MAX := 4
 const STARS_TO_WIN := 3
 
@@ -118,6 +121,11 @@ const LINES := {
 const STARTER_NAME := {"fire": "烈焰起始牌組", "water": "激流起始牌組", "leaf": "森林起始牌組",
 	"thunder": "雷霆起始牌組", "rock": "大地起始牌組"}
 
+## 自製卡可選的招式效果 [fx, 中文]
+const FX_CHOICES := [["", "無"], ["burn", "灼傷"], ["para", "麻痺"], ["para_flip", "擲硬幣麻痺"], ["heal", "回復自己"],
+	["bench", "傷害對手後備"], ["flip_plus", "擲硬幣加傷害"], ["energy_plus", "多能量加傷害"], ["self_discard", "丟自己能量"],
+	["recoil", "自己也受傷"], ["snipe", "狙擊最弱後備"], ["power_up", "找能量附後備"], ["draw", "抽牌"]]
+
 ## 電腦對手：名字、頭像、介紹、難度（0 簡單～3 冠軍）、牌組、勝利獎金
 const OPPONENTS := [
 	{"id": "mia", "name": "花店的米亞", "avatar": "ai_mia", "level": 0, "reward": 60,
@@ -129,6 +137,95 @@ const OPPONENTS := [
 	{"id": "drake", "name": "冠軍德雷克", "avatar": "ai_drake", "level": 3, "reward": 160,
 		"intro": "靈獸卡牌聯盟冠軍！火屬性猛攻牌組。", "deck": "drake"},
 ]
+
+
+static var BEASTS: Dictionary = BASE_BEASTS.duplicate()
+static var ENERGY: Dictionary = BASE_ENERGY.duplicate()
+static var TRAINERS: Dictionary = BASE_TRAINERS.duplicate()
+static var custom_art := {}    # 自製卡 id → 圖檔路徑
+
+
+## 換成這份自製卡清單；cards = {id: 定義}（見 SaveDB），art_dir 是圖檔資料夾
+static func set_custom(cards: Dictionary, art_dir: String) -> void:
+	BEASTS = BASE_BEASTS.duplicate()
+	ENERGY = BASE_ENERGY.duplicate()
+	TRAINERS = BASE_TRAINERS.duplicate()
+	custom_art = {}
+	for id in cards:
+		var c: Dictionary = cards[id]
+		custom_art[id] = "%s/%s.png" % [art_dir, id]
+		match str(c.get("kind", "beast")):
+			"energy":
+				ENERGY[id] = {"name": str(c.name), "type": _safe_type(c.get("type"))}
+			"trainer":
+				var effect := str(c.get("effect", "potion"))
+				if not BASE_TRAINERS.has(effect):
+					effect = "potion"
+				var base: Dictionary = BASE_TRAINERS[effect]
+				TRAINERS[id] = {"name": str(c.name), "kind": base.kind, "target": base.target, "text": base.text, "effect": effect}
+			_:
+				BEASTS[id] = compile_beast(c)
+	# 進化來源可能是自製卡，全部登記完才檢查得到
+	for id in cards:
+		if BEASTS.has(id) and BEASTS[id].stage == 1:
+			var f: String = BEASTS[id].from
+			if f == id or not BEASTS.has(f) or BEASTS[f].stage != 0:
+				BEASTS[id].stage = 0
+
+
+static func _safe_type(t) -> String:
+	return str(t) if str(t) in TYPES else "fire"
+
+
+## 把編輯畫面的定義轉成對戰引擎用的靈獸資料（JSON 讀回來的數字都是 float，這裡統一轉 int）
+static func compile_beast(c: Dictionary) -> Dictionary:
+	var t := _safe_type(c.get("type"))
+	var attacks: Array = []
+	for a in c.get("attacks", []):
+		if str(a.get("name", "")).strip_edges() == "":
+			continue
+		var n_type := clampi(int(a.get("n_type", 1)), 0, MAX_COST)
+		var n_any := clampi(int(a.get("n_any", 0)), 0, MAX_COST - n_type)
+		var cost: Array = []
+		for i in n_type:
+			cost.append(t)
+		for i in n_any:
+			cost.append("any")
+		if cost.is_empty():
+			cost.append("any")
+		var atk := {"name": str(a.name), "cost": cost, "dmg": clampi(int(a.get("dmg", 0)), 0, 300), "v": int(a.get("v", 0))}
+		if str(a.get("fx", "")) != "":
+			atk.fx = str(a.fx)
+		attacks.append(atk)
+	if attacks.is_empty():
+		attacks.append({"name": "撞擊", "cost": ["any"], "dmg": 10, "v": 0})
+	return {"name": str(c.get("name", "自製靈獸")), "type": t, "stage": 1 if str(c.get("from", "")) != "" else 0,
+		"from": str(c.get("from", "")), "hp": clampi(int(c.get("hp", 60)), 10, 300),
+		"retreat": clampi(int(c.get("retreat", 1)), 0, 4), "attacks": attacks}
+
+
+static func is_custom(id: String) -> bool:
+	return custom_art.has(id)
+
+
+static func known(id: String) -> bool:
+	return BEASTS.has(id) or ENERGY.has(id) or TRAINERS.has(id)
+
+
+## 訓練家卡的效果：自製卡沿用某張內建卡的效果
+static func effect_of(id: String) -> String:
+	return str(TRAINERS[id].get("effect", id))
+
+
+static func has_custom(deck: Array) -> bool:
+	for id in deck:
+		if is_custom(str(id)):
+			return true
+	return false
+
+
+static func max_copies(n: int) -> int:
+	return MAX_COPIES * n / DECK_SIZE
 
 
 static func is_beast(id: String) -> bool:
@@ -159,11 +256,18 @@ static func all_ids() -> Array:
 
 ## 卡圖路徑（對應 assets/images/cards/）
 static func art_path(id: String) -> String:
+	if custom_art.has(id):
+		return custom_art[id]
 	if BEASTS.has(id):
 		return "res://assets/images/cards/b_%s.png" % id
 	if ENERGY.has(id):
 		return "res://assets/images/cards/%s.png" % id
 	return "res://assets/images/cards/t_%s.png" % id
+
+
+## 頭像路徑：內建頭像存名字，玩家上傳的存完整 user:// 路徑
+static func avatar_path(a: String) -> String:
+	return a if a.begins_with("user://") else "res://assets/images/avatars/%s.png" % a
 
 
 ## 稀有度：0 普通、1 不普通、2 稀有（卡包抽卡用）
@@ -211,10 +315,15 @@ static func deck_by_name(n: String) -> Array:
 	return starter("fire")
 
 
-## 檢查牌組是否合法；回傳錯誤訊息，空字串代表合法
-static func validate_deck(d: Array) -> String:
-	if d.size() != DECK_SIZE:
-		return "牌組要剛好 %d 張（目前 %d 張）" % [DECK_SIZE, d.size()]
+## 電腦對手的牌組配合玩家的張數：60 張就把 30 張牌組疊兩份
+static func scaled_deck(d: Array, n: int) -> Array:
+	return d + d if n == 60 else d
+
+
+## 檢查牌組是否合法；n 是這副牌組設定的張數。回傳錯誤訊息，空字串代表合法
+static func validate_deck(d: Array, n := DECK_SIZE) -> String:
+	if d.size() != n:
+		return "牌組要剛好 %d 張（目前 %d 張）" % [n, d.size()]
 	var counts := {}
 	var basics := 0
 	for id in d:
@@ -222,8 +331,9 @@ static func validate_deck(d: Array) -> String:
 		if is_beast(id) and BEASTS[id].stage == 0:
 			basics += 1
 	for id in counts:
-		if not is_energy(id) and counts[id] > MAX_COPIES:
-			return "「%s」最多放 %d 張" % [card_name(id), MAX_COPIES]
-	if basics < 4:
-		return "至少要放 4 張基礎靈獸"
+		if not is_energy(id) and counts[id] > max_copies(n):
+			return "「%s」最多放 %d 張" % [card_name(id), max_copies(n)]
+	var need_basics := 4 * n / DECK_SIZE
+	if basics < need_basics:
+		return "至少要放 %d 張基礎靈獸" % need_basics
 	return ""

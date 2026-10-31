@@ -1,16 +1,20 @@
 extends Control
-## 主程式：畫面切換（標題／建立玩家／主選單／電腦對手／線上大廳／卡包商店／牌組編輯／戰績／規則／對戰）。
+## 主程式：畫面切換（標題／建立玩家／主選單／玩家資料／電腦對手／線上大廳／卡包商店／牌組編輯／匯入卡包／戰績／規則／對戰）。
+## 版面固定 1280×720、放在畫面正中央；背景鋪滿整個視窗，手機平板不同長寬比也不會有黑邊。
 ## 玩家資料由 SaveDB 存在 user://saves/，每次對戰動作、開卡包、改牌組都會自動存檔。
 
 const PACK_PRICE := 100
 const AVATARS := ["av_boy", "av_girl", "av_kid", "av_cool"]
 const SECRET_TAPS := 5
 const SECRET_WINDOW_MS := 3000
+const UI_SIZE := Vector2(1280, 720)
 
 var db := SaveDB.new()
 var profile := {}
 var rng := RandomNumberGenerator.new()
 var screen: Control
+var backdrop: TextureRect
+var backdrop_shade: ColorRect
 var secret_taps := 0
 var secret_start := 0
 
@@ -18,7 +22,24 @@ var secret_start := 0
 func _ready() -> void:
 	rng.randomize()
 	theme = _make_theme()
+	backdrop = TextureRect.new()
+	backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(backdrop)
+	backdrop_shade = ColorRect.new()
+	backdrop_shade.color = Color(0, 0, 0, 0.35)
+	backdrop_shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop_shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(backdrop_shade)
+	resized.connect(_center_screen)
 	show_title()
+
+
+func _center_screen() -> void:
+	if screen:
+		screen.position = ((size - UI_SIZE) / 2).floor()
 
 
 func _make_theme() -> Theme:
@@ -55,18 +76,11 @@ func _clear(bg := "bg_menu", music := "bgm_menu") -> Control:
 	if screen:
 		screen.queue_free()
 	screen = Control.new()
-	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	screen.size = UI_SIZE
 	add_child(screen)
-	if bg != "":
-		var t := TextureRect.new()
-		t.texture = CardView.tex("res://assets/images/ui/%s.png" % bg)
-		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		t.set_anchors_preset(Control.PRESET_FULL_RECT)
-		screen.add_child(t)
-		var shade := ColorRect.new()
-		shade.color = Color(0, 0, 0, 0.35)
-		shade.set_anchors_preset(Control.PRESET_FULL_RECT)
-		screen.add_child(shade)
+	_center_screen()
+	backdrop.texture = CardView.tex("res://assets/images/ui/%s.png" % bg)
+	backdrop_shade.color.a = 0.25 if bg == "bg_battle" else 0.35
 	if music != "":
 		Audio.bgm(music)
 	return screen
@@ -126,7 +140,7 @@ func _tex_rect(parent: Control, path: String, r: Rect2) -> TextureRect:
 
 
 func _toast(t: String, color := Color("ffe680")) -> void:
-	var l := _label(self, t, Vector2(0, 640), 24, Vector2(1280, 40), color)
+	var l := _label(self, t, ((size - UI_SIZE) / 2).floor() + Vector2(0, 640), 24, Vector2(1280, 40), color)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.z_index = 50
 	var tw := create_tween()
@@ -145,6 +159,62 @@ func _deck() -> Array:
 	return profile.decks[i].cards
 
 
+func _deck_size() -> int:
+	return int(profile.decks[clampi(profile.active_deck, 0, profile.decks.size() - 1)].deck_size)
+
+
+func _deck_error() -> String:
+	return CardDB.validate_deck(_deck(), _deck_size())
+
+
+## 線上對手的電腦沒有你的自製卡，所以線上對戰不能帶自製卡
+func _online_error() -> String:
+	if CardDB.has_custom(_deck()):
+		return "線上對戰不能使用自製卡，請換一副沒有自製卡的牌組"
+	return _deck_error()
+
+
+func _opt(parent: Control, r: Rect2, items: Array, sel: int, cb: Callable) -> OptionButton:
+	var o := OptionButton.new()
+	o.position = r.position
+	o.size = r.size
+	o.clip_text = true
+	o.add_theme_font_size_override("font_size", 17)
+	for it in items:
+		o.add_item(str(it))
+	o.selected = sel
+	o.item_selected.connect(cb)
+	parent.add_child(o)
+	return o
+
+
+func _spin(parent: Control, r: Rect2, lo: int, hi: int, step: int, v: int, cb: Callable) -> SpinBox:
+	var sp := SpinBox.new()
+	sp.position = r.position
+	sp.size = r.size
+	sp.min_value = lo
+	sp.max_value = hi
+	sp.step = step
+	sp.value = v
+	sp.get_line_edit().add_theme_font_size_override("font_size", 17)
+	sp.value_changed.connect(func(x): cb.call(int(x)))
+	parent.add_child(sp)
+	return sp
+
+
+func _edit(parent: Control, r: Rect2, t: String, max_len: int, cb := Callable()) -> LineEdit:
+	var e := LineEdit.new()
+	e.position = r.position
+	e.size = r.size
+	e.text = t
+	e.max_length = max_len
+	e.add_theme_font_size_override("font_size", 18)
+	if cb.is_valid():
+		e.text_changed.connect(cb)
+	parent.add_child(e)
+	return e
+
+
 # ---------- 標題 ----------
 
 func show_title() -> void:
@@ -160,7 +230,7 @@ func show_title() -> void:
 	var y := 64
 	for pr in profiles.slice(0, 5):
 		var row := _button(p, "", Rect2(30, y, 440, 58), load_and_menu.bind(str(pr.name)))
-		_tex_rect(row, "res://assets/images/avatars/%s.png" % pr.get("avatar", "av_boy"), Rect2(6, 4, 50, 50))
+		_tex_rect(row, CardDB.avatar_path(str(pr.get("avatar", "av_boy"))), Rect2(6, 4, 50, 50))
 		var st: Dictionary = pr.get("stats", {})
 		_label(row, "%s   %d 勝 %d 敗   金幣 %d" % [pr.name, int(st.get("wins", 0)), int(st.get("losses", 0)), int(pr.get("coins", 0))],
 			Vector2(66, 14), 20)
@@ -245,8 +315,11 @@ func show_new_profile() -> void:
 
 func _top_bar(s: Control) -> void:
 	var bar := _panel(s, Rect2(10, 8, 1260, 66))
-	_tex_rect(bar, "res://assets/images/avatars/%s.png" % profile.avatar, Rect2(8, 6, 54, 54))
-	_label(bar, profile.name, Vector2(72, 16), 26)
+	_tex_rect(bar, CardDB.avatar_path(profile.avatar), Rect2(8, 6, 54, 54))
+	var player_title := str(profile.get("title", ""))
+	_label(bar, profile.name, Vector2(72, 16 if player_title == "" else 4), 26)
+	if player_title != "":
+		_label(bar, player_title, Vector2(72, 38), 15, Vector2.ZERO, Color("ffd84a"))
 	var st: Dictionary = profile.stats
 	_label(bar, "戰績 %d 勝 %d 敗" % [st.wins, st.losses], Vector2(300, 20), 20)
 	_tex_rect(bar, "res://assets/images/ui/coin.png", Rect2(1080, 13, 40, 40))
@@ -282,10 +355,11 @@ func _on_avatar_tap(e: InputEvent) -> void:
 func show_secret() -> void:
 	var dim := ColorRect.new()
 	dim.color = Color(0, 0, 0, 0.6)
-	dim.size = Vector2(1280, 720)
+	dim.position = -screen.position
+	dim.size = size
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	screen.add_child(dim)
-	var p := _panel(dim, Rect2(340, 170, 600, 360), 0.95)
+	var p := _panel(dim, Rect2(screen.position + Vector2(340, 170), Vector2(600, 360)), 0.95)
 	_label(p, "隱藏選單", Vector2(0, 16), 30, Vector2(600, 44), Color("ffe27a")).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_button(p, "補齊全部卡片", Rect2(150, 80, 300, 56), func():
 		var added := SaveDB.fill_collection(profile)
@@ -329,14 +403,65 @@ func show_menu() -> void:
 	if profile.get("current_match") is Dictionary:
 		items.append(["▶ 繼續上一場對戰", resume_match])
 	items += [["電腦對戰", show_ai_select], ["線上對戰", show_lobby], ["卡包商店", show_shop],
-		["牌組編輯", show_deck_editor], ["戰績紀錄", show_records], ["規則說明", show_rules], ["換玩家", show_title]]
-	var p := _panel(s, Rect2(440, 100, 400, 80 + items.size() * 66))
+		["牌組編輯", show_deck_editor], ["匯入卡包", show_import], ["玩家資料", show_profile],
+		["戰績紀錄", show_records], ["規則說明", show_rules], ["換玩家", show_title]]
+	var rows := (items.size() + 1) / 2
+	var p := _panel(s, Rect2(240, 120, 800, 50 + rows * 86))
 	for i in items.size():
-		var b := _button(p, items[i][0], Rect2(40, 30 + i * 66, 320, 54), items[i][1], 24)
+		var b := _button(p, items[i][0], Rect2(40 + (i % 2) * 370, 28 + (i / 2) * 86, 350, 68), items[i][1], 26)
 		if i == 0 and profile.get("current_match") is Dictionary:
 			b.add_theme_color_override("font_color", Color("7dff9a"))
 	var mute := _button(s, "音效開關", Rect2(1130, 660, 130, 44), func(): Audio.toggle_mute(), 18)
 	mute.tooltip_text = "開／關音效與音樂"
+	if OS.has_feature("web"):
+		_button(s, "全螢幕", Rect2(990, 660, 130, 44), func(): JavaScriptBridge.eval("window.__bcFullscreen && __bcFullscreen()", true), 18)
+
+
+# ---------- 玩家資料 ----------
+
+func show_profile() -> void:
+	var s := _clear()
+	_top_bar(s)
+	var p := _panel(s, Rect2(190, 90, 900, 610))
+	_label(p, "玩家資料", Vector2(0, 14), 32, Vector2(900, 46), Color("ffe27a")).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var chosen := {"avatar": profile.avatar}
+	var preview := _tex_rect(p, CardDB.avatar_path(profile.avatar), Rect2(50, 80, 200, 200))
+	var set_avatar := func(a: String):
+		chosen.avatar = a
+		preview.texture = CardView.tex(CardDB.avatar_path(a))
+	_label(p, "名字", Vector2(290, 92), 22)
+	var name_edit := _edit(p, Rect2(400, 84, 300, 44), profile.name, 8)
+	_label(p, "稱號", Vector2(290, 152), 22)
+	var title_edit := _edit(p, Rect2(400, 144, 300, 44), str(profile.get("title", "")), 10)
+	title_edit.placeholder_text = "最多 10 個字"
+	_label(p, "自我介紹", Vector2(290, 212), 22)
+	var bio_edit := _edit(p, Rect2(400, 204, 450, 44), str(profile.get("bio", "")), 30)
+	bio_edit.placeholder_text = "最多 30 個字"
+	_label(p, "換頭像", Vector2(50, 306), 22)
+	for i in AVATARS.size():
+		var b := _button(p, "", Rect2(50 + i * 120, 342, 108, 108), set_avatar.bind(AVATARS[i]))
+		_tex_rect(b, CardDB.avatar_path(AVATARS[i]), Rect2(6, 6, 96, 96))
+	_button(p, "上傳自己的圖片", Rect2(540, 342, 310, 108), func():
+		FilePick.pick(self, false, func(images: Array):
+			var path := db.save_avatar(images[0])
+			if path != "":
+				set_avatar.call(path)), 22)
+	_button(p, "返回", Rect2(260, 510, 160, 56), show_menu)
+	_button(p, "儲存", Rect2(480, 510, 160, 56), func():
+		if save_profile_info(name_edit.text, title_edit.text, bio_edit.text, chosen.avatar):
+			show_menu())
+
+
+## 儲存玩家資料；名字不合法回傳 false、其他欄位也不變
+func save_profile_info(new_name: String, new_title: String, bio: String, avatar: String) -> bool:
+	if new_name.strip_edges() != profile.name and not rename_player(new_name):
+		return false
+	profile.title = new_title.strip_edges()
+	profile.bio = bio.strip_edges()
+	profile.avatar = avatar
+	_save()
+	_toast("玩家資料已更新")
+	return true
 
 
 # ---------- 電腦對戰 ----------
@@ -363,13 +488,13 @@ func show_ai_select() -> void:
 
 
 func start_ai_match(i: int) -> void:
-	var err := CardDB.validate_deck(_deck())
+	var err := _deck_error()
 	if err != "":
 		_toast("你的牌組不合法：" + err, Color("ff7070"))
 		return
 	var o: Dictionary = CardDB.OPPONENTS[i]
 	var b := Battle.new()
-	b.setup(rng.randi() % 2000000000, _deck(), CardDB.deck_by_name(o.deck), profile.name, o.name)
+	b.setup(rng.randi() % 2000000000, _deck(), CardDB.scaled_deck(CardDB.deck_by_name(o.deck), _deck_size()), profile.name, o.name)
 	profile.current_match = {"opp": i, "save": b.to_save()}
 	_save()
 	_run_ai_battle(b, i)
@@ -383,7 +508,7 @@ func resume_match() -> void:
 
 func _run_ai_battle(b: Battle, i: int) -> void:
 	var o: Dictionary = CardDB.OPPONENTS[i]
-	var s := _clear("", "")
+	var s := _clear("bg_battle", "")
 	var ui := BattleUI.new()
 	s.add_child(ui)
 	ui.start(b, 0, {"kind": "ai", "level": o.level, "my_avatar": profile.avatar, "opp_avatar": o.avatar,
@@ -427,7 +552,7 @@ func show_lobby() -> void:
 		_label(p, "這個版本沒有線上設定（config/online.cfg），暫時不能線上對戰。", Vector2(40, 120), 20, Vector2(620, 80)).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_button(p, "返回", Rect2(270, 440, 160, 50), show_menu)
 		return
-	var help := _label(p, "一人「開房間」把 6 碼房號告訴朋友，另一人輸入房號「加入」。\n電腦版和網頁版可以互打，使用你目前的牌組。",
+	var help := _label(p, "一人「開房間」把 6 碼房號告訴朋友，另一人輸入房號「加入」。\n電腦版和網頁版可以互打，使用你目前的牌組（不能帶自製卡）。",
 		Vector2(40, 76), 18, Vector2(620, 60))
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var status := _label(p, "", Vector2(40, 330), 22, Vector2(620, 90), Color("7dff9a"))
@@ -449,8 +574,8 @@ func show_lobby() -> void:
 	create.pressed.connect(func():
 		if state.busy:
 			return
-		if CardDB.validate_deck(_deck()) != "":
-			status.text = "牌組不合法：" + CardDB.validate_deck(_deck())
+		if _online_error() != "":
+			status.text = _online_error()
 			return
 		state.busy = true
 		status.text = "開房間中……"
@@ -475,8 +600,8 @@ func show_lobby() -> void:
 		if code.length() != 6:
 			status.text = "請輸入 6 碼房號"
 			return
-		if CardDB.validate_deck(_deck()) != "":
-			status.text = "牌組不合法：" + CardDB.validate_deck(_deck())
+		if _online_error() != "":
+			status.text = _online_error()
 			return
 		state.busy = true
 		status.text = "加入中……"
@@ -491,7 +616,7 @@ func show_lobby() -> void:
 func _start_online(code: String, room: Dictionary, me: int) -> void:
 	var b := Battle.new()
 	b.setup(int(room.seed), str(room.host_deck).split(","), str(room.guest_deck).split(","), str(room.host), str(room.guest))
-	var s := _clear("", "")
+	var s := _clear("bg_battle", "")
 	var ui := BattleUI.new()
 	s.add_child(ui)
 	ui.start(b, me, {"kind": "online", "code": code, "level": 1, "my_avatar": profile.avatar, "opp_avatar": "av_cool"})
@@ -519,6 +644,8 @@ func show_shop() -> void:
 	var reveal := Control.new()
 	reveal.position = Vector2(400, 90)
 	p.add_child(reveal)
+	var packs: Array = db.library.packs.filter(func(x): return not x.cards.is_empty())
+	var pack_pick := _opt(p, Rect2(400, 66, 400, 44), ["標準卡包"] + packs.map(func(x): return x.name), 0, func(_i): pass)
 	var buy := _button(p, "購買（%d 金幣）" % PACK_PRICE, Rect2(80, 510, 260, 60), func(): pass, 24)
 	buy.pressed.connect(func():
 		if profile.coins < PACK_PRICE:
@@ -527,7 +654,8 @@ func show_shop() -> void:
 			return
 		buy.disabled = true
 		profile.coins -= PACK_PRICE
-		var got := SaveDB.open_pack(rng)
+		var i_pack := pack_pick.selected
+		var got: Array = SaveDB.open_pack(rng) if i_pack == 0 else SaveDB.open_custom_pack(packs[i_pack - 1], rng)
 		for id in got:
 			profile.collection[id] = int(profile.collection.get(id, 0)) + 1
 		profile.stats.packs += 1
@@ -566,6 +694,8 @@ func show_shop() -> void:
 var edit_deck: Array = []
 var edit_index := 0
 var edit_filter := "all"
+var edit_size := CardDB.DECK_SIZE
+var preview: CardView
 
 
 func show_deck_editor(idx := -1) -> void:
@@ -574,6 +704,7 @@ func show_deck_editor(idx := -1) -> void:
 	else:
 		edit_index = clampi(profile.active_deck, 0, profile.decks.size() - 1)
 	edit_deck = profile.decks[edit_index].cards.duplicate()
+	edit_size = int(profile.decks[edit_index].deck_size)
 	_draw_editor()
 
 
@@ -597,7 +728,7 @@ func _draw_editor() -> void:
 	name_edit.add_theme_font_size_override("font_size", 18)
 	top.add_child(name_edit)
 	_button(top, "新增牌組", Rect2(620, 10, 120, 40), func():
-		profile.decks.append({"name": "新牌組 %d" % (profile.decks.size() + 1), "cards": []})
+		profile.decks.append({"name": "新牌組 %d" % (profile.decks.size() + 1), "cards": [], "deck_size": edit_size})
 		_save()
 		show_deck_editor(profile.decks.size() - 1), 17)
 	_button(top, "刪除", Rect2(746, 10, 80, 40), func():
@@ -609,12 +740,13 @@ func _draw_editor() -> void:
 		_save()
 		show_deck_editor(0), 17)
 	_button(top, "自動組牌", Rect2(832, 10, 120, 40), func():
-		edit_deck = _auto_deck()
+		edit_deck = _auto_deck(edit_size)
 		_draw_editor_lists(s), 17)
 	var save_btn := _button(top, "儲存並使用", Rect2(958, 10, 150, 40), func(): pass, 17)
 	_button(top, "返回", Rect2(1114, 10, 130, 40), show_menu, 17)
 	save_btn.pressed.connect(func():
-		var err := CardDB.validate_deck(edit_deck)
+		var err := CardDB.validate_deck(edit_deck, edit_size)
+		profile.decks[edit_index].deck_size = edit_size
 		profile.decks[edit_index].name = name_edit.text.strip_edges() if name_edit.text.strip_edges() != "" else "我的牌組"
 		profile.decks[edit_index].cards = edit_deck.duplicate()
 		if err == "":
@@ -626,14 +758,27 @@ func _draw_editor() -> void:
 			_toast("已儲存，但還不能使用：" + err, Color("ffb070")))
 	# 篩選
 	var filters := [["all", "全部"], ["fire", "火"], ["water", "水"], ["leaf", "草"], ["thunder", "雷"], ["rock", "岩"],
-		["energy", "能量"], ["trainer", "訓練家"]]
+		["energy", "能量"], ["trainer", "訓練家"], ["custom", "自製"]]
 	for i in filters.size():
 		var f: Array = filters[i]
-		var b := _button(s, f[1], Rect2(14 + i * 100, 76, 94, 36), func():
+		var b := _button(s, f[1], Rect2(14 + i * 98, 76, 92, 36), func():
 			edit_filter = f[0]
 			_draw_editor_lists(s), 17)
 		b.modulate = Color.WHITE if edit_filter == f[0] else Color(0.7, 0.7, 0.7)
 	_draw_editor_lists(s)
+	preview = CardView.new()
+	preview.size = Vector2(360, 504)
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.visible = false
+	preview.z_index = 20
+	s.add_child(preview)
+
+
+## 放大看一張卡；at_left 用在右邊的牌組清單，放大圖才不會蓋住滑鼠
+func _show_preview(id: String, at_left := false) -> void:
+	preview.setup(id, "full")
+	preview.position = Vector2(520 if at_left else 905, 112)
+	preview.visible = true
 
 
 func _draw_editor_lists(s: Control) -> void:
@@ -668,15 +813,17 @@ func _draw_editor_lists(s: Control) -> void:
 			cv.count_label = "0"
 		else:
 			cv.count_label = ("%d" % in_deck) if CardDB.is_energy(id) else "%d/%d" % [in_deck, owned]
-		cv.tooltip_text = "點一下加入牌組"
+		cv.use_tap_mode()
+		cv.hovered.connect(func(_v): _show_preview(id))
+		cv.unhovered.connect(func(_v): preview.visible = false)
 		cv.pressed.connect(func(_v):
-			var limit := 99 if CardDB.is_energy(id) else mini(owned, CardDB.MAX_COPIES)
+			var limit := 99 if CardDB.is_energy(id) else mini(owned, CardDB.max_copies(edit_size))
 			if owned <= 0:
 				Audio.play("error")
 				_toast("還沒有這張卡，去卡包商店抽抽看！", Color("ffb070"))
-			elif edit_deck.size() >= CardDB.DECK_SIZE:
+			elif edit_deck.size() >= edit_size:
 				Audio.play("error")
-				_toast("牌組已經 %d 張了" % CardDB.DECK_SIZE, Color("ffb070"))
+				_toast("牌組已經 %d 張了" % edit_size, Color("ffb070"))
 			elif int(counts.get(id, 0)) >= limit:
 				Audio.play("error")
 				_toast("這張卡最多放 %d 張" % limit, Color("ffb070"))
@@ -688,9 +835,15 @@ func _draw_editor_lists(s: Control) -> void:
 	# 右：牌組清單
 	var p := _panel(s, Rect2(900, 76, 370, 636))
 	p.name = "decklist"
-	var err := CardDB.validate_deck(edit_deck)
-	_label(p, "牌組 %d / %d 張" % [edit_deck.size(), CardDB.DECK_SIZE], Vector2(14, 8), 22, Vector2.ZERO,
+	var err := CardDB.validate_deck(edit_deck, edit_size)
+	_label(p, "牌組 %d / %d 張" % [edit_deck.size(), edit_size], Vector2(14, 8), 22, Vector2.ZERO,
 		Color("7dff9a") if err == "" else Color("ffb070"))
+	for i in CardDB.DECK_SIZES.size():
+		var n: int = CardDB.DECK_SIZES[i]
+		var b := _button(p, "%d 張" % n, Rect2(206 + i * 78, 6, 72, 34), func():
+			edit_size = n
+			_draw_editor_lists(s), 16)
+		b.modulate = Color.WHITE if edit_size == n else Color(0.6, 0.6, 0.6)
 	var e := _label(p, "可以使用！" if err == "" else err, Vector2(14, 40), 15, Vector2(340, 40))
 	e.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var ds := ScrollContainer.new()
@@ -712,9 +865,14 @@ func _draw_editor_lists(s: Control) -> void:
 		var c: Color = CardDB.TYPE_COLOR.get(CardDB.BEASTS[id].type if CardDB.is_beast(id) else (CardDB.ENERGY[id].type if CardDB.is_energy(id) else "any"))
 		row.add_theme_color_override("font_color", c.lightened(0.3))
 		row.tooltip_text = "點一下拿掉一張"
+		row.gui_input.connect(func(ev):
+			if ev is InputEventMouseMotion and ev.device != InputEvent.DEVICE_ID_EMULATION:
+				_show_preview(id, true))
+		row.mouse_exited.connect(func(): preview.visible = false)
 		row.pressed.connect(func():
 			Audio.play("click")
 			edit_deck.erase(id)
+			preview.visible = false
 			_draw_editor_lists(s))
 		vb.add_child(row)
 
@@ -724,6 +882,7 @@ func _filter_ok(id: String) -> bool:
 		"all": return true
 		"energy": return CardDB.is_energy(id)
 		"trainer": return CardDB.is_trainer(id)
+		"custom": return CardDB.is_custom(id)
 	if CardDB.is_beast(id):
 		return CardDB.BEASTS[id].type == edit_filter
 	if CardDB.is_energy(id):
@@ -731,26 +890,27 @@ func _filter_ok(id: String) -> bool:
 	return false
 
 
-## 依收藏自動組一副：挑擁有最多靈獸的兩種屬性
-func _auto_deck() -> Array:
+## 依收藏自動組一副：挑擁有最多靈獸的兩種屬性；60 張時每種卡的張數都放大兩倍
+func _auto_deck(n := CardDB.DECK_SIZE) -> Array:
+	var k_n := n / CardDB.DECK_SIZE
 	var score := {}
 	for t in CardDB.TYPES:
 		score[t] = 0
 		for line in CardDB.LINES[t]:
 			for id in line:
-				score[t] += mini(int(profile.collection.get(id, 0)), 3)
+				score[t] += mini(int(profile.collection.get(id, 0)), 3 * k_n)
 	var types: Array = CardDB.TYPES.duplicate()
 	types.sort_custom(func(a, b): return score[a] > score[b])
 	var d: Array = []
 	for t in types.slice(0, 2):
 		for line in CardDB.LINES[t]:
 			for id in line:
-				for i in mini(int(profile.collection.get(id, 0)), 3 if CardDB.BEASTS[id].stage == 0 else 2):
-					if d.size() < 14:
+				for i in mini(int(profile.collection.get(id, 0)), (3 if CardDB.BEASTS[id].stage == 0 else 2) * k_n):
+					if d.size() < 14 * k_n:
 						d.append(id)
 	for id in ["potion", "finder", "journal", "scroll", "whistle", "notes", "band", "bell", "recycle"]:
-		for i in mini(int(profile.collection.get(id, 0)), 2):
-			if d.size() < 20:
+		for i in mini(int(profile.collection.get(id, 0)), 2 * k_n):
+			if d.size() < 20 * k_n:
 				d.append(id)
 	var main_types: Array = []
 	for id in d:
@@ -759,10 +919,205 @@ func _auto_deck() -> Array:
 	if main_types.is_empty():
 		main_types = [types[0]]
 	var k := 0
-	while d.size() < CardDB.DECK_SIZE:
+	while d.size() < n:
 		d.append("e_" + main_types[k % main_types.size()])
 		k += 1
 	return d
+
+
+# ---------- 匯入卡包 ----------
+
+var edit_pack := {}
+var edit_card := ""
+var pack_view: CardView
+
+
+func show_import() -> void:
+	var s := _clear()
+	_top_bar(s)
+	var p := _panel(s, Rect2(140, 90, 1000, 610))
+	_label(p, "匯入卡包", Vector2(30, 14), 32, Vector2.ZERO, Color("ffe27a"))
+	var help := _label(p, "一次選多張圖片就是一個卡包，每張圖變成一張卡，再逐張設定屬性。圖片會裁成正方形（%d×%d），和內建卡圖一樣。匯入後你會得到每張卡 3 張，卡包商店也買得到；這台裝置的其他玩家從商店抽。線上對戰不能帶自製卡。" % [SaveDB.ART_SIZE, SaveDB.ART_SIZE],
+		Vector2(30, 62), 18, Vector2(940, 80))
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	help.size = Vector2(940, 80)
+	_button(p, "選擇圖片匯入", Rect2(30, 150, 300, 60), func():
+		FilePick.pick(self, true, func(images: Array): import_images(images)), 24)
+	_button(p, "用內建圖片做範例卡包", Rect2(350, 150, 340, 60), import_example, 22)
+	_label(p, "已匯入的卡包", Vector2(30, 226), 22, Vector2.ZERO, Color("ffe27a"))
+	var sc := ScrollContainer.new()
+	sc.position = Vector2(30, 262)
+	sc.size = Vector2(940, 270)
+	p.add_child(sc)
+	var vb := VBoxContainer.new()
+	vb.custom_minimum_size = Vector2(920, 0)
+	sc.add_child(vb)
+	if db.library.packs.is_empty():
+		var none := Label.new()
+		none.text = "還沒有卡包。"
+		vb.add_child(none)
+	for pack in db.library.packs:
+		var row := Control.new()
+		row.custom_minimum_size = Vector2(920, 56)
+		vb.add_child(row)
+		_label(row, "%s（%d 張）" % [pack.name, pack.cards.size()], Vector2(6, 12), 22)
+		_button(row, "編輯", Rect2(620, 4, 130, 46), show_pack_editor.bind(pack))
+		var del := _button(row, "刪除", Rect2(770, 4, 130, 46), func(): pass)
+		del.pressed.connect(func():
+			if del.text == "刪除":
+				del.text = "確定刪除？"
+			else:
+				delete_pack(pack)
+				show_import())
+	_button(p, "返回", Rect2(420, 544, 160, 50), show_menu)
+
+
+## 匯入圖片變成新卡包，並打開設定畫面
+func import_images(images: Array, pname := "", defs: Array = []) -> Dictionary:
+	if images.size() > SaveDB.MAX_PACK_CARDS:
+		_toast("一個卡包最多 %d 張，多的沒有匯入" % SaveDB.MAX_PACK_CARDS, Color("ffb070"))
+	var pack := db.add_pack(pname if pname != "" else "我的卡包 %d" % (db.library.packs.size() + 1), images, defs)
+	SaveDB.grant_pack(profile, pack)
+	_save()
+	show_pack_editor(pack)
+	return pack
+
+
+## 範例：拿內建卡圖做一包，靈獸、進化、訓練家、能量各一種示範
+func import_example() -> Dictionary:
+	var files := ["b_embertail", "b_blazecrown", "b_bubbotter", "t_potion", "e_water"]
+	var images: Array = files.map(func(f): return load("res://assets/images/cards/%s.png" % f).get_image())
+	var d0 := SaveDB.default_card(1)
+	d0.name = "範例幼狐"
+	var d1 := SaveDB.default_card(2)
+	d1.name = "範例狐王"
+	d1.hp = 130
+	d1.attacks[0].dmg = 40
+	d1.attacks[1].merge({"name": "範例火焰", "dmg": 90, "n_type": 2, "n_any": 1, "fx": "burn"}, true)
+	var d2 := SaveDB.default_card(3)
+	d2.name = "範例水獺"
+	d2.type = "water"
+	var d3 := SaveDB.default_card(4)
+	d3.merge({"kind": "trainer", "name": "範例回復藥", "effect": "potion"}, true)
+	var d4 := SaveDB.default_card(5)
+	d4.merge({"kind": "energy", "name": "範例水能量", "type": "water"}, true)
+	var pack := import_images(images, "範例卡包 %d" % (db.library.packs.size() + 1), [d0, d1, d2, d3, d4])
+	db.library.cards[pack.cards[1]].from = pack.cards[0]
+	db.save_library()
+	show_pack_editor(pack)
+	return pack
+
+
+func delete_pack(pack: Dictionary) -> void:
+	db.delete_pack(pack)
+	SaveDB.purge_missing(profile)
+	_save()
+
+
+func show_pack_editor(pack: Dictionary, id := "") -> void:
+	edit_pack = pack
+	if pack.cards.is_empty():
+		show_import()
+		return
+	edit_card = id if id != "" else str(pack.cards[0])
+	db.save_library()
+	var s := _clear()
+	var top := _panel(s, Rect2(10, 8, 1260, 60))
+	_label(top, "卡包名稱", Vector2(16, 14), 22, Vector2.ZERO, Color("ffe27a"))
+	_edit(top, Rect2(130, 8, 340, 44), pack.name, 12, func(t): pack.name = t)
+	_label(top, "點左邊的卡片，在右邊設定屬性", Vector2(490, 16), 18)
+	_button(top, "完成", Rect2(1100, 8, 146, 44), func():
+		db.save_library()
+		show_import())
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(10, 76)
+	scroll.size = Vector2(464, 636)
+	s.add_child(scroll)
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	scroll.add_child(grid)
+	for cid in pack.cards:
+		var cv := CardView.new().setup(cid, "full")
+		cv.custom_minimum_size = Vector2(108, 151)
+		cv.selected = cid == edit_card
+		cv.use_tap_mode()
+		cv.pressed.connect(func(_v): show_pack_editor(pack, cid))
+		grid.add_child(cv)
+	pack_view = CardView.new().setup(edit_card, "full")
+	pack_view.position = Vector2(482, 150)
+	pack_view.size = Vector2(290, 406)
+	pack_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	s.add_child(pack_view)
+	_draw_card_form(_panel(s, Rect2(780, 76, 490, 636)))
+
+
+## 改了一個欄位：更新卡片資料與預覽（按「完成」或換卡片時才寫進檔案）
+func set_card(key: String, v) -> void:
+	db.library.cards[edit_card][key] = v
+	CardDB.set_custom(db.library.cards, db.custom_dir())
+	pack_view.queue_redraw()
+
+
+func _draw_card_form(f: Control) -> void:
+	var c: Dictionary = db.library.cards[edit_card]
+	var kinds := ["beast", "trainer", "energy"]
+	var type_names: Array = CardDB.TYPES.map(func(t): return CardDB.TYPE_NAME[t])
+	var redraw := func(): show_pack_editor(edit_pack, edit_card)
+	_label(f, "種類", Vector2(14, 20), 18)
+	_opt(f, Rect2(66, 12, 150, 40), ["靈獸", "訓練家", "能量"], kinds.find(c.kind), func(i):
+		set_card("kind", kinds[i])
+		redraw.call())
+	_label(f, "名字", Vector2(232, 20), 18)
+	_edit(f, Rect2(284, 12, 192, 40), c.name, 6, func(t): set_card("name", t))
+	if c.kind == "trainer":
+		var effects: Array = CardDB.BASE_TRAINERS.keys()
+		_label(f, "效果", Vector2(14, 76), 18)
+		_opt(f, Rect2(66, 68, 410, 40), effects.map(func(e): return CardDB.BASE_TRAINERS[e].name), maxi(0, effects.find(c.effect)), func(i):
+			set_card("effect", effects[i])
+			redraw.call())
+		var t := _label(f, CardDB.BASE_TRAINERS[c.effect].text, Vector2(14, 124), 18, Vector2(460, 100))
+		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		return
+	_label(f, "屬性", Vector2(14, 76), 18)
+	_opt(f, Rect2(66, 68, 150, 40), type_names, CardDB.TYPES.find(c.type), func(i):
+		set_card("type", CardDB.TYPES[i])
+		redraw.call())
+	if c.kind == "energy":
+		return
+	_label(f, "HP", Vector2(232, 76), 18)
+	_spin(f, Rect2(284, 68, 192, 40), 10, 300, 10, int(c.hp), func(v): set_card("hp", v))
+	var froms: Array = [""]
+	for id in CardDB.BEASTS:
+		if id != edit_card and CardDB.BEASTS[id].stage == 0:
+			froms.append(id)
+	_label(f, "進化自", Vector2(14, 132), 18)
+	_opt(f, Rect2(84, 124, 212, 40), froms.map(func(id): return "基礎靈獸" if id == "" else CardDB.card_name(id)),
+		maxi(0, froms.find(str(c.get("from", "")))), func(i): set_card("from", froms[i]))
+	_label(f, "撤退", Vector2(312, 132), 18)
+	_spin(f, Rect2(362, 124, 114, 40), 0, 4, 1, int(c.retreat), func(v): set_card("retreat", v))
+	var fx_ids: Array = CardDB.FX_CHOICES.map(func(x): return x[0])
+	for n in 2:
+		var a: Dictionary = c.attacks[n]
+		var y := 180 + n * 226
+		var set_atk := func(key: String, v):
+			a[key] = v
+			set_card("attacks", c.attacks)
+		_label(f, "招式 %d%s" % [n + 1, "（名字留空就沒有這招）" if n == 1 else ""], Vector2(14, y), 18, Vector2.ZERO, Color("ffe27a"))
+		_label(f, "名字", Vector2(14, y + 38), 18)
+		_edit(f, Rect2(66, y + 30, 170, 40), str(a.name), 6, func(t): set_atk.call("name", t))
+		_label(f, "傷害", Vector2(252, y + 38), 18)
+		_spin(f, Rect2(304, y + 30, 172, 40), 0, 300, 10, int(a.dmg), func(v): set_atk.call("dmg", v))
+		_label(f, "同屬性能量", Vector2(14, y + 90), 18)
+		_spin(f, Rect2(124, y + 82, 112, 40), 0, CardDB.MAX_COST, 1, int(a.n_type), func(v): set_atk.call("n_type", v))
+		_label(f, "任意能量", Vector2(252, y + 90), 18)
+		_spin(f, Rect2(342, y + 82, 134, 40), 0, CardDB.MAX_COST, 1, int(a.n_any), func(v): set_atk.call("n_any", v))
+		_label(f, "效果", Vector2(14, y + 142), 18)
+		_opt(f, Rect2(66, y + 134, 240, 40), CardDB.FX_CHOICES.map(func(x): return x[1]), maxi(0, fx_ids.find(str(a.fx))),
+			func(i): set_atk.call("fx", fx_ids[i]))
+		_label(f, "數值", Vector2(322, y + 142), 18)
+		_spin(f, Rect2(372, y + 134, 104, 40), 0, 100, 10, int(a.v), func(v): set_atk.call("v", v))
 
 
 # ---------- 戰績 ----------

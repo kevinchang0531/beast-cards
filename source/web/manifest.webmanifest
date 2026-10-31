@@ -1,0 +1,10 @@
+{
+  "name": "靈獸卡牌對戰",
+  "short_name": "靈獸卡牌",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [{"src": "index.apple-touch-icon.png", "sizes": "180x180", "type": "image/png"}]
+}

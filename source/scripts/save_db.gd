@@ -7,21 +7,34 @@ extends RefCounted
 ##   stats {games, wins, losses, kos, packs, online_wins, online_games}、beaten {電腦對手 id: 勝場}、
 ##   history [每場對戰：日期、模式、對手、勝負、回合數、星徽]（最多 200 筆）、
 ##   current_match 進行中的電腦對戰（每個動作後自動存，關掉遊戲再開可以繼續），
-##   created 建立時間、updated 最後存檔時間 }
+##   created 建立時間、updated 最後存檔時間，title 稱號、bio 自我介紹 }
+## 牌組 decks[i] = {name, cards, deck_size（30 或 60；舊存檔沒有這欄，讀檔時補 30）}
+## 自製卡包存在 <dir>/custom/（同一台裝置的玩家共用）：cards.json = {packs: [{id, name, cards: [卡片 id]}], cards: {id: 定義}}，
+## 每張卡一個 <id>.png（256×256）；上傳的頭像是 avatar_*.png。
+## 定義 = {kind: beast/trainer/energy, name, type, hp, retreat, from, attacks: [{name, dmg, n_type, n_any, fx, v}], effect}
 
 const DEFAULT_DIR := "user://saves"
 const MAX_HISTORY := 200
+const ART_SIZE := 256
+const AVATAR_SIZE := 192
+const MAX_PACK_CARDS := 40
 
 var dir: String
+var library := {"packs": [], "cards": {}}
 
 
 func _init(d: String = DEFAULT_DIR) -> void:
 	dir = d
-	DirAccess.make_dir_recursive_absolute(dir)
+	DirAccess.make_dir_recursive_absolute(custom_dir())
+	load_library()
 
 
 func _path(pname: String) -> String:
 	return "%s/%s.json" % [dir, pname.md5_text()]
+
+
+func custom_dir() -> String:
+	return dir + "/custom"
 
 
 func list_profiles() -> Array:
@@ -53,9 +66,9 @@ func new_profile(pname: String, avatar: String, starter_type: String) -> Diction
 	var now := Time.get_datetime_string_from_system(false, true)
 	var p := {
 		"name": pname, "avatar": avatar, "coins": 200, "collection": coll,
-		"decks": [{"name": CardDB.STARTER_NAME[starter_type], "cards": deck}], "active_deck": 0,
+		"decks": [{"name": CardDB.STARTER_NAME[starter_type], "cards": deck, "deck_size": CardDB.DECK_SIZE}], "active_deck": 0,
 		"stats": {"games": 0, "wins": 0, "losses": 0, "kos": 0, "packs": 0, "online_games": 0, "online_wins": 0},
-		"beaten": {}, "history": [], "current_match": null, "created": now, "updated": now,
+		"beaten": {}, "history": [], "current_match": null, "created": now, "updated": now, "title": "", "bio": "",
 	}
 	save(p)
 	return p
@@ -77,7 +90,30 @@ func load_profile(pname: String) -> Dictionary:
 	d.collection = coll
 	for k in d.get("stats", {}):
 		d.stats[k] = int(d.stats[k])
+	# 舊版存檔補上新欄位，原有資料一律保留
+	if not d.has("title"):
+		d.title = ""
+	if not d.has("bio"):
+		d.bio = ""
+	for deck in d.decks:
+		deck.deck_size = int(deck.get("deck_size", CardDB.DECK_SIZE))
+	purge_missing(d)
 	return d
+
+
+## 卡包被刪掉後，把這位玩家身上找不到的卡清掉；進行中的對戰用到就只能放棄
+static func purge_missing(p: Dictionary) -> void:
+	for deck in p.decks:
+		deck.cards = deck.cards.filter(func(id): return CardDB.known(str(id)))
+	for id in p.collection.keys():
+		if not CardDB.known(id):
+			p.collection.erase(id)
+	if p.get("current_match") is Dictionary:
+		for dk in p.current_match.save.decks:
+			for id in dk:
+				if not CardDB.known(str(id)):
+					p.current_match = null
+					return
 
 
 func save(p: Dictionary) -> bool:
@@ -105,14 +141,15 @@ func rename_profile(p: Dictionary, new_name: String) -> void:
 		delete_profile(old)
 
 
-## 把靈獸和訓練家卡都補到牌組上限張數，回傳補了幾張
+## 把靈獸和訓練家卡都補到 60 張牌組的上限張數，回傳補了幾張
 static func fill_collection(p: Dictionary) -> int:
 	var added := 0
 	for id in CardDB.BEASTS.keys() + CardDB.TRAINERS.keys():
 		var have := int(p.collection.get(id, 0))
-		if have < CardDB.MAX_COPIES:
-			added += CardDB.MAX_COPIES - have
-			p.collection[id] = CardDB.MAX_COPIES
+		var want := CardDB.max_copies(60)
+		if have < want:
+			added += want - have
+			p.collection[id] = want
 	return added
 
 
@@ -138,7 +175,7 @@ static func add_result(p: Dictionary, mode: String, opp: String, won: bool, turn
 ## 開卡包：5 張，最後一張至少不普通，有 1/4 機會是稀有進化靈獸
 static func open_pack(rng: RandomNumberGenerator) -> Array:
 	var by_rarity := [[], [], []]
-	for id in CardDB.BEASTS.keys() + CardDB.TRAINERS.keys():
+	for id in CardDB.BASE_BEASTS.keys() + CardDB.BASE_TRAINERS.keys():
 		by_rarity[CardDB.rarity(id)].append(id)
 	var out: Array = []
 	for i in 3:
@@ -147,3 +184,83 @@ static func open_pack(rng: RandomNumberGenerator) -> Array:
 	var r := 2 if rng.randf() < 0.35 else 1
 	out.append(by_rarity[r][rng.randi_range(0, by_rarity[r].size() - 1)])
 	return out
+
+
+# ---------- 自製卡包 ----------
+
+func load_library() -> void:
+	var path := custom_dir() + "/cards.json"
+	var d = JSON.parse_string(FileAccess.get_file_as_string(path)) if FileAccess.file_exists(path) else null
+	library = d if d is Dictionary and d.has("packs") else {"packs": [], "cards": {}}
+	CardDB.set_custom(library.cards, custom_dir())
+
+
+func save_library() -> void:
+	var f := FileAccess.open(custom_dir() + "/cards.json", FileAccess.WRITE)
+	if f == null:
+		push_error("卡包存檔失敗")
+		return
+	f.store_string(JSON.stringify(library, "  "))
+	f.close()
+	CardDB.set_custom(library.cards, custom_dir())
+
+
+## 裁成正中央的正方形再縮放，和內建卡圖一樣
+static func square_image(src: Image, side: int) -> Image:
+	var img: Image = src.duplicate()
+	if img.is_compressed():
+		img.decompress()
+	img.convert(Image.FORMAT_RGBA8)
+	var m := mini(img.get_width(), img.get_height())
+	img = img.get_region(Rect2i((img.get_width() - m) / 2, (img.get_height() - m) / 2, m, m))
+	img.resize(side, side, Image.INTERPOLATE_LANCZOS)
+	return img
+
+
+static func default_card(i: int) -> Dictionary:
+	return {"kind": "beast", "name": "自製靈獸%d" % i, "type": "fire", "hp": 60, "retreat": 1, "from": "", "effect": "potion",
+		"attacks": [{"name": "撞擊", "dmg": 20, "n_type": 1, "n_any": 0, "fx": "", "v": 0},
+			{"name": "", "dmg": 40, "n_type": 1, "n_any": 1, "fx": "", "v": 0}]}
+
+
+## 每張圖變成一張預設自製卡，回傳新卡包；defs 可以指定每張卡的定義
+func add_pack(pname: String, images: Array, defs: Array = []) -> Dictionary:
+	var stamp := int(Time.get_unix_time_from_system() * 1000.0)
+	var pack := {"id": "p%d" % stamp, "name": pname, "cards": []}
+	for i in mini(images.size(), MAX_PACK_CARDS):
+		var id := "c%d_%d" % [stamp, i]
+		if square_image(images[i], ART_SIZE).save_png("%s/%s.png" % [custom_dir(), id]) != OK:
+			continue
+		library.cards[id] = defs[i] if i < defs.size() else default_card(i + 1)
+		pack.cards.append(id)
+	library.packs.append(pack)
+	save_library()
+	return pack
+
+
+func delete_pack(pack: Dictionary) -> void:
+	for id in pack.cards:
+		library.cards.erase(id)
+		DirAccess.remove_absolute("%s/%s.png" % [custom_dir(), id])
+	library.packs.erase(pack)
+	save_library()
+
+
+## 匯入的人直接拿到 3 張（能量卡和內建能量一樣無限量）
+static func grant_pack(p: Dictionary, pack: Dictionary) -> void:
+	for id in pack.cards:
+		p.collection[id] = 99 if CardDB.is_energy(id) else maxi(int(p.collection.get(id, 0)), CardDB.MAX_COPIES)
+
+
+## 開自製卡包：從這包隨機抽 5 張
+static func open_custom_pack(pack: Dictionary, rng: RandomNumberGenerator) -> Array:
+	var out: Array = []
+	for i in 5:
+		out.append(pack.cards[rng.randi_range(0, pack.cards.size() - 1)])
+	return out
+
+
+## 存上傳的頭像，回傳可以放進 profile.avatar 的路徑
+func save_avatar(src: Image) -> String:
+	var path := "%s/avatar_%d.png" % [custom_dir(), int(Time.get_unix_time_from_system() * 1000.0)]
+	return path if square_image(src, AVATAR_SIZE).save_png(path) == OK else ""

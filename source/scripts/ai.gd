@@ -91,7 +91,7 @@ static func _pick_trainer(b: Battle, pi: int, level: int, list: Array, can_attac
 	var p: Dictionary = b.players[pi]
 	for a in list:
 		var id := b.card_id(p.hand[a.hand])
-		match id:
+		match CardDB.effect_of(id):
 			"potion":
 				var tgt = b.beast_at(pi, a.slot)
 				if tgt.dmg >= 30:
