@@ -232,6 +232,12 @@ static func compile_beast(c: Dictionary) -> Dictionary:
 		"retreat": clampi(int(c.get("retreat", 1)), 0, 4), "attacks": attacks}
 
 
+## base 能不能進化成 id：同名的不同版本卡都算（匯入的系列常有同名異圖）
+static func can_evolve(base: String, id: String) -> bool:
+	var f := str(BEASTS[id].get("from", ""))
+	return base == f or (f != "" and BEASTS.has(base) and BEASTS.has(f) and BEASTS[base].name == BEASTS[f].name)
+
+
 static func is_custom(id: String) -> bool:
 	return custom_art.has(id)
 

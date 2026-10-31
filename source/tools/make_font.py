@@ -28,8 +28,9 @@ def main() -> None:
     # 保險：所有腳本裡出現的中日韓字元都收（字串跨行或組字時也不會漏）
     for f in (ROOT / "scripts").glob("*.gd"):
         chars |= {c for c in f.read_text(encoding="utf-8") if ord(c) > 0x2000}
-    # 玩家自己取名字、線上對手名字會用到任何常用字：收 Big5 常用字（5401 字）
-    for hi in range(0xA4, 0xC7):
+    # 玩家取名字、線上對手名字、批次匯入的卡名會用到任何字：收整個 Big5（常用＋次常用共 13053 字）
+    chars |= set("糬")
+    for hi in list(range(0xA4, 0xC7)) + list(range(0xC9, 0xFA)):
         for lo in list(range(0x40, 0x7F)) + list(range(0xA1, 0xFF)):
             try:
                 chars |= set(bytes([hi, lo]).decode("big5"))

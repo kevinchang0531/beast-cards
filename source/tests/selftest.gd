@@ -172,6 +172,64 @@ func _run() -> void:
 	await get_tree().process_frame
 	check(_find_ui().b.names[0] == "新名字", "改名後能繼續對戰")
 	await _test_new_features()
+	await _test_batch_import()
+
+
+## 批次匯入：用假資料，真實卡片資料不放進 repo
+func _test_batch_import() -> void:
+	var cards := [
+		{"id": "1", "name": "測試蟲", "supertype": "Pokemon", "subtype": "Basic", "setCode": "T1", "imageUrl": "image/a.png", "hp": 60,
+			"pokemonType": "Grass", "retreatCost": ["Colorless"], "evolvesFrom": null, "attacks": [
+			{"name": "咬", "cost": ["Grass", "Colorless"], "damage": "20", "effect": "將對手的戰鬥寶可夢【中毒】。"}]},
+		{"id": "2", "name": "測試蟲", "supertype": "Pokemon", "subtype": "Basic", "setCode": "T1", "imageUrl": "image/b.png", "hp": 60,
+			"pokemonType": "Grass", "attacks": [{"name": "咬", "cost": ["Grass"], "damage": "10", "effect": ""}]},
+		{"id": "3", "name": "測試蛾", "supertype": "Pokemon", "subtype": "ex", "setCode": "T1", "imageUrl": "image/c.png", "hp": 330,
+			"pokemonType": "Darkness", "evolvesFrom": "測試蟲", "retreatCost": null, "attacks": [
+			{"name": "連擊", "cost": ["Darkness", "Fire", "Colorless", "Colorless", "Colorless"], "damage": "30×", "effect": "擲3次硬幣，造成正面出現的次數×30點傷害。"},
+			{"name": "能量波", "cost": ["Colorless"], "damage": "20+", "effect": "增加這隻寶可夢身上附加的【火】能量的數量×20點傷害。"},
+			{"name": "第三招", "cost": ["Colorless"], "damage": "10", "effect": ""}]},
+		{"id": "4", "name": "孤兒", "supertype": "Pokemon", "subtype": "Stage1", "setCode": "T1", "imageUrl": "image/d.png", "hp": 90,
+			"pokemonType": "Metal", "evolvesFrom": "不存在", "attacks": []},
+		{"id": "5", "name": "測試博士", "supertype": "Trainer", "subtype": "Supporter", "setCode": "T1", "imageUrl": "image/e.png",
+			"rulesText": "從牌庫抽出3張卡。"},
+		{"id": "6", "name": "沒有圖", "supertype": "Trainer", "subtype": "Item", "setCode": "T1", "imageUrl": "image/x.png", "rulesText": ""},
+	]
+	var img := Image.create(120, 70, false, Image.FORMAT_RGBA8)
+	var files := {"jsons": {"T1_cards.json": JSON.stringify(cards), "bad.json": "{}"}, "images": {}}
+	for n in ["a", "b", "c", "d", "e"]:
+		files.images[n + ".png"] = img
+	var packs: Array = await main.import_batch(files)
+	check(packs.size() == 1 and packs[0].cards.size() == 5, "批次匯入：一個 JSON 一個卡包，壞檔和沒圖的略過")
+	check(FileAccess.file_exists(main.db.custom_dir() + "/x_T1_3.png"), "批次匯入：卡圖存好")
+	var moth: Dictionary = CardDB.BEASTS["x_T1_3"]
+	check(moth.type == "fire" and moth.stage == 1 and moth.hp == 300 and moth.retreat == 0, "批次匯入：屬性併入、進化接上、HP 上限")
+	check(moth.attacks.size() == 2 and moth.attacks[0].cost.size() == CardDB.MAX_COST, "批次匯入：最多兩招、費用上限 4")
+	check(moth.attacks[0].fx == "flip_plus" and moth.attacks[0].v == 60 and moth.attacks[1].fx == "energy_plus", "批次匯入：招式效果對應")
+	check(CardDB.BEASTS["x_T1_1"].type == "leaf" and CardDB.BEASTS["x_T1_1"].attacks[0].fx == "burn", "批次匯入：草屬性與中毒變灼傷")
+	check(CardDB.BEASTS["x_T1_4"].stage == 0 and CardDB.BEASTS["x_T1_4"].type == "rock", "批次匯入：找不到進化來源就當基礎")
+	check(CardDB.effect_of("x_T1_5") == "journal", "批次匯入：訓練家對應內建效果")
+	check(CardDB.can_evolve("x_T1_2", "x_T1_3"), "批次匯入：同名不同版本也能進化")
+	main.show_pack_editor(packs[0], "x_T1_3")
+	await shot("24_batch_editor")
+	check(main.profile.collection.get("x_T1_1", 0) == CardDB.MAX_COPIES, "批次匯入：匯入者拿到卡")
+	var again: Array = await main.import_batch(files)
+	check(again[0].cards.size() == 5 and main.db.library.packs.filter(func(x): return x.id == "set_T1").size() == 1, "批次匯入：同系列重新匯入不會重複")
+	var deck: Array = []
+	for i in 20:
+		deck.append(["x_T1_1", "x_T1_2", "x_T1_3", "x_T1_4"][i % 4])
+	for i in 10:
+		deck.append("e_leaf")
+	var bt := Battle.new()
+	bt.setup(5, deck, CardDB.starter("fire"), "甲", "乙")
+	var guard := 0
+	while bt.winner < 0 and guard < 3000:
+		guard += 1
+		var acts: Array = bt.legal_actions(bt.actor())
+		if acts.is_empty() or not bt.apply(acts[rng.randi_range(0, acts.size() - 1)]):
+			break
+	check(bt.winner >= 0, "批次匯入：匯入卡能打完一場")
+	main.delete_pack(again[0])
+	check(not CardDB.known("x_T1_1"), "批次匯入：刪除卡包")
 
 
 ## 玩家資料、30／60 張牌組、匯入卡包、舊存檔相容

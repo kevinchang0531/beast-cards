@@ -34,6 +34,10 @@ var holding := false
 var hover_sent := false
 
 static var _tex_cache := {}
+## 自製卡圖一幀只讀一張，卡片很多時牌組編輯才不會卡住；還沒讀到先畫沒圖的卡
+static var _art_wait: Array = []
+static var _art_frame := -1
+var art_pending := false
 
 
 static func tex(path: String) -> Texture2D:
@@ -44,6 +48,16 @@ static func tex(path: String) -> Texture2D:
 		else:
 			_tex_cache[path] = load(path) if ResourceLoader.exists(path) else null
 	return _tex_cache[path]
+
+
+func _art() -> Texture2D:
+	var path := CardDB.art_path(id)
+	art_pending = path.begins_with("user://") and not _tex_cache.has(path)
+	if not art_pending:
+		return tex(path)
+	if not _art_wait.has(path):
+		_art_wait.append(path)
+	return null
 
 
 func _init() -> void:
@@ -100,6 +114,13 @@ func _gui_input(e: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	if art_pending:
+		if _art_frame != Engine.get_process_frames() and not _art_wait.is_empty():
+			_art_frame = Engine.get_process_frames()
+			tex(_art_wait.pop_back())
+		if _tex_cache.has(CardDB.art_path(id)):
+			art_pending = false
+			queue_redraw()
 	if down_touch and down_ms > 0 and not holding and Time.get_ticks_msec() - down_ms >= HOLD_MS:
 		holding = true
 		hovered.emit(self)
@@ -171,7 +192,7 @@ func _draw_full() -> void:
 	var fc := frame_color()
 	draw_rect(Rect2(Vector2.ZERO, BASE), fc.darkened(0.25))
 	draw_rect(Rect2(6, 6, 188, 268), fc.lightened(0.55))
-	var art := tex(CardDB.art_path(id))
+	var art := _art()
 	if CardDB.is_beast(id):
 		var bd: Dictionary = CardDB.BEASTS[id]
 		_text(bd.name, Vector2(12, 27), 120, 17, Color("1a1a1a"))
@@ -248,7 +269,7 @@ static func fx_desc(atk: Dictionary) -> String:
 func _draw_mini() -> void:
 	var fc := frame_color()
 	draw_rect(Rect2(Vector2.ZERO, BASE), fc.darkened(0.3))
-	var art := tex(CardDB.art_path(id))
+	var art := _art()
 	if art:
 		draw_texture_rect(art, Rect2(8, 8, 184, 184), false)
 	var nm := CardDB.card_name(id)

@@ -246,6 +246,41 @@ func delete_pack(pack: Dictionary) -> void:
 	save_library()
 
 
+## 批次匯入：一個系列一個卡包，id 由系列代號決定，重新匯入同系列會覆蓋原卡，牌組和收藏不受影響
+func set_pack(code: String, pname: String) -> Dictionary:
+	var id := "set_" + code
+	for pack in library.packs:
+		if pack.id == id:
+			return pack
+	var pack := {"id": id, "name": pname, "cards": []}
+	library.packs.append(pack)
+	return pack
+
+
+func add_set_card(pack: Dictionary, id: String, def: Dictionary, img: Image) -> bool:
+	if square_image(img, ART_SIZE).save_png("%s/%s.png" % [custom_dir(), id]) != OK:
+		return false
+	library.cards[id] = def
+	if not pack.cards.has(id):
+		pack.cards.append(id)
+	return true
+
+
+## 把 from_name 接到自製卡庫裡同名的卡（跨系列也算）；找不到進化來源就當基礎靈獸，回傳接上幾張
+func link_evolutions() -> int:
+	var by_name := {}
+	for id in library.cards:
+		if str(library.cards[id].get("kind")) == "beast" and not by_name.has(library.cards[id].name):
+			by_name[library.cards[id].name] = id
+	var linked := 0
+	for id in library.cards:
+		var c: Dictionary = library.cards[id]
+		if str(c.get("from_name", "")) != "":
+			c.from = by_name.get(c.from_name, "")
+			linked += 1 if c.from != "" else 0
+	return linked
+
+
 ## 匯入的人直接拿到 3 張（能量卡和內建能量一樣無限量）
 static func grant_pack(p: Dictionary, pack: Dictionary) -> void:
 	for id in pack.cards:

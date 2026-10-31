@@ -193,7 +193,7 @@ func legal_actions(pi: int) -> Array:
 			elif turn >= 3:
 				for s in 1 + p.bench.size():
 					var b = beast_at(pi, s)
-					if b != null and cards[b.uid] == bd.from and b.turn_played < turn:
+					if b != null and CardDB.can_evolve(cards[b.uid], id) and b.turn_played < turn:
 						out.append({"t": "evolve", "p": pi, "hand": i, "slot": s})
 		elif CardDB.is_energy(id):
 			if not p.energy_used:

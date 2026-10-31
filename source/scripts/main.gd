@@ -938,13 +938,16 @@ func show_import() -> void:
 	_top_bar(s)
 	var p := _panel(s, Rect2(140, 90, 1000, 610))
 	_label(p, "匯入卡包", Vector2(30, 14), 32, Vector2.ZERO, Color("ffe27a"))
-	var help := _label(p, "一次選多張圖片就是一個卡包，每張圖變成一張卡，再逐張設定屬性。圖片會裁成正方形（%d×%d），和內建卡圖一樣。匯入後你會得到每張卡 3 張，卡包商店也買得到；這台裝置的其他玩家從商店抽。線上對戰不能帶自製卡。" % [SaveDB.ART_SIZE, SaveDB.ART_SIZE],
+	var help := _label(p, "一次選多張圖片就是一個卡包，再逐張設定屬性；也可以選資料夾批次匯入卡片 JSON（每個 JSON 一個卡包，屬性、招式、進化自動對應）。匯入後你有每張卡 3 張，卡包商店也買得到。線上對戰不能帶自製卡。",
 		Vector2(30, 62), 18, Vector2(940, 80))
-	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	help.size = Vector2(940, 80)
+	help.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	help.set_deferred("size", Vector2(940, 80))
 	_button(p, "選擇圖片匯入", Rect2(30, 150, 300, 60), func():
 		FilePick.pick(self, true, func(images: Array): import_images(images)), 24)
-	_button(p, "用內建圖片做範例卡包", Rect2(350, 150, 340, 60), import_example, 22)
+	_button(p, "用內建圖片做範例卡包", Rect2(345, 150, 300, 60), import_example, 20)
+	var batch := _button(p, "批次匯入 JSON", Rect2(660, 150, 310, 60), func():
+		FilePick.pick_folder(self, import_batch), 24)
+	batch.tooltip_text = "選一個資料夾，裡面每個卡片 JSON 變成一個卡包；屬性、招式、進化自動對應，之後可以再編輯。同系列重新匯入會覆蓋。"
 	_label(p, "已匯入的卡包", Vector2(30, 226), 22, Vector2.ZERO, Color("ffe27a"))
 	var sc := ScrollContainer.new()
 	sc.position = Vector2(30, 262)
@@ -982,6 +985,48 @@ func import_images(images: Array, pname := "", defs: Array = []) -> Dictionary:
 	_save()
 	show_pack_editor(pack)
 	return pack
+
+
+## 批次匯入：每個 JSON 變一個卡包，圖片用檔名配對；回傳做好的卡包
+func import_batch(files: Dictionary) -> Array:
+	var s := _clear()
+	var p := _panel(s, Rect2(340, 280, 600, 140))
+	var bar := _label(p, "匯入中…", Vector2(30, 50), 26, Vector2(540, 40))
+	var done: Array = []
+	var total := 0
+	var no_art := 0
+	for jname in files.jsons:
+		var cards: Array = CardImport.parse(files.jsons[jname])
+		if cards.is_empty():
+			continue
+		var code := str(cards[0].get("setCode", str(jname).get_basename())).validate_filename()
+		var pack := db.set_pack(code, code)
+		for i in cards.size():
+			var img = files.images.get(CardImport.image_name(cards[i]))
+			if img is String:
+				img = Image.load_from_file(img)
+			if not (img is Image):
+				no_art += 1
+				continue
+			var id := "x_%s_%s" % [code, str(cards[i].get("id", i))]
+			CardView._tex_cache.erase("%s/%s.png" % [db.custom_dir(), id])
+			if db.add_set_card(pack, id, CardImport.to_def(cards[i]), img):
+				total += 1
+			if i % 5 == 0:
+				bar.text = "匯入 %s：%d / %d" % [code, i + 1, cards.size()]
+				await get_tree().process_frame
+		done.append(pack)
+	db.link_evolutions()
+	db.save_library()
+	for pack in done:
+		SaveDB.grant_pack(profile, pack)
+	_save()
+	show_import()
+	if done.is_empty():
+		_toast("資料夾裡沒有看得懂的卡片 JSON", Color("ff7070"))
+	else:
+		_toast("匯入 %d 個卡包、%d 張卡%s" % [done.size(), total, "（%d 張找不到圖片，沒有匯入）" % no_art if no_art > 0 else ""], Color("7dff9a"))
+	return done
 
 
 ## 範例：拿內建卡圖做一包，靈獸、進化、訓練家、能量各一種示範
@@ -1071,7 +1116,7 @@ func _draw_card_form(f: Control) -> void:
 		set_card("kind", kinds[i])
 		redraw.call())
 	_label(f, "名字", Vector2(232, 20), 18)
-	_edit(f, Rect2(284, 12, 192, 40), c.name, 6, func(t): set_card("name", t))
+	_edit(f, Rect2(284, 12, 192, 40), c.name, 12, func(t): set_card("name", t))
 	if c.kind == "trainer":
 		var effects: Array = CardDB.BASE_TRAINERS.keys()
 		_label(f, "效果", Vector2(14, 76), 18)
@@ -1107,7 +1152,7 @@ func _draw_card_form(f: Control) -> void:
 			set_card("attacks", c.attacks)
 		_label(f, "招式 %d%s" % [n + 1, "（名字留空就沒有這招）" if n == 1 else ""], Vector2(14, y), 18, Vector2.ZERO, Color("ffe27a"))
 		_label(f, "名字", Vector2(14, y + 38), 18)
-		_edit(f, Rect2(66, y + 30, 170, 40), str(a.name), 6, func(t): set_atk.call("name", t))
+		_edit(f, Rect2(66, y + 30, 170, 40), str(a.name), 12, func(t): set_atk.call("name", t))
 		_label(f, "傷害", Vector2(252, y + 38), 18)
 		_spin(f, Rect2(304, y + 30, 172, 40), 0, 300, 10, int(a.dmg), func(v): set_atk.call("dmg", v))
 		_label(f, "同屬性能量", Vector2(14, y + 90), 18)
