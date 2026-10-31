@@ -18,6 +18,7 @@ const MAX_HISTORY := 200
 const ART_SIZE := 256
 const AVATAR_SIZE := 192
 const MAX_PACK_CARDS := 40
+const SHARE_FORMAT := "beast-pack"
 
 var dir: String
 var library := {"packs": [], "cards": {}}
@@ -279,6 +280,39 @@ func link_evolutions() -> int:
 			c.from = by_name.get(c.from_name, "")
 			linked += 1 if c.from != "" else 0
 	return linked
+
+
+## 分享檔：一個卡包的卡片定義和卡圖包成一個 JSON，別人匯入就有同一包；卡圖用 base64 內嵌
+func export_pack(pack: Dictionary) -> String:
+	var cards := {}
+	var art := {}
+	for id in pack.cards:
+		cards[id] = library.cards[id]
+		art[id] = Marshalls.raw_to_base64(FileAccess.get_file_as_bytes("%s/%s.png" % [custom_dir(), id]))
+	return JSON.stringify({"format": SHARE_FORMAT, "version": 1, "id": pack.id, "name": pack.name, "cards": cards, "art": art})
+
+
+static func is_shared(d) -> bool:
+	return d is Dictionary and d.get("format") == SHARE_FORMAT and d.get("cards") is Dictionary and d.get("art") is Dictionary
+
+
+## 匯入分享檔，同一個卡包再匯入會覆蓋；格式不對或卡圖壞掉的卡略過
+func import_shared(d: Dictionary) -> Dictionary:
+	var pack := {}
+	for x in library.packs:
+		if x.id == str(d.get("id")):
+			pack = x
+	if pack.is_empty():
+		pack = {"id": str(d.get("id", "p%d" % int(Time.get_unix_time_from_system()))), "name": str(d.get("name", "分享卡包")), "cards": []}
+		library.packs.append(pack)
+	for id in d.cards:
+		var img := Image.new()
+		if d.cards[id] is Dictionary and str(id).validate_filename() == str(id) \
+				and img.load_png_from_buffer(Marshalls.base64_to_raw(str(d.art.get(id, "")))) == OK:
+			add_set_card(pack, str(id), d.cards[id], img)
+	if pack.cards.is_empty():
+		library.packs.erase(pack)
+	return pack
 
 
 ## 匯入的人直接拿到 3 張（能量卡和內建能量一樣無限量）

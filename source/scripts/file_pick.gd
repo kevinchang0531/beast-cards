@@ -30,11 +30,11 @@ window.__bcPick = function (multiple, cb) {
   });
 };
 // 電腦選資料夾；手機不支援，改成一次選 JSON 和圖片檔。只讀 JSON 有提到的圖片
-window.__bcPickFolder = function (cb) {
+window.__bcPickFolder = function (folder, cb) {
   var input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
-  if (!/Android|iPad|iPhone|iPod/.test(navigator.userAgent) && navigator.maxTouchPoints <= 1) input.webkitdirectory = true;
+  if (folder && !/Android|iPad|iPhone|iPod/.test(navigator.userAgent) && navigator.maxTouchPoints <= 1) input.webkitdirectory = true;
   window.__bcOpen(input, '點這裡選擇 JSON 和圖片', async function () {
     var want = new Set();
     for (var f of input.files) {
@@ -89,25 +89,54 @@ var files := {"jsons": {}, "images": {}}
 var js_cb
 
 
-static func pick_folder(host: Node, cb: Callable) -> void:
+## folder = false 時改選單一 JSON 檔（匯入分享檔）
+static func pick_folder(host: Node, cb: Callable, folder := true) -> void:
 	var p := FilePick.new()
 	p.done = cb
 	host.add_child(p)
 	if OS.has_feature("web"):
 		JavaScriptBridge.eval(JS, true)
 		p.js_cb = JavaScriptBridge.create_callback(p._on_web_folder)
-		JavaScriptBridge.get_interface("window").__bcPickFolder(p.js_cb)
+		JavaScriptBridge.get_interface("window").__bcPickFolder(folder, p.js_cb)
 	else:
 		var fd := FileDialog.new()
 		fd.access = FileDialog.ACCESS_FILESYSTEM
-		fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+		fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR if folder else FileDialog.FILE_MODE_OPEN_FILE
+		fd.filters = PackedStringArray([] if folder else ["*.json;卡包分享檔"])
 		fd.use_native_dialog = true
 		p.add_child(fd)
+		fd.file_selected.connect(func(path):
+			p.done.call({"jsons": {path.get_file(): FileAccess.get_file_as_string(path)}, "images": {}})
+			p.queue_free())
 		fd.dir_selected.connect(func(path):
 			p.done.call(scan_dir(path))
 			p.queue_free())
 		fd.canceled.connect(p.queue_free)
 		fd.popup_centered(Vector2i(900, 600))
+
+
+## 存文字檔：網頁版直接下載，電腦版選存檔位置
+static func save_text(host: Node, fname: String, text: String, cb: Callable) -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(text.to_utf8_buffer(), fname, "application/json")
+		cb.call()
+		return
+	var fd := FileDialog.new()
+	fd.access = FileDialog.ACCESS_FILESYSTEM
+	fd.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	fd.current_file = fname
+	fd.filters = PackedStringArray(["*.json;卡包分享檔"])
+	fd.use_native_dialog = true
+	host.add_child(fd)
+	fd.file_selected.connect(func(path):
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		if f:
+			f.store_string(text)
+			f.close()
+			cb.call()
+		fd.queue_free())
+	fd.canceled.connect(fd.queue_free)
+	fd.popup_centered(Vector2i(900, 600))
 
 
 ## 掃整個資料夾（含子資料夾）的 JSON 和圖片；圖片先只記路徑，用到才讀

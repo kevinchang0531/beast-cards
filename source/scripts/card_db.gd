@@ -117,6 +117,9 @@ const BASE_TRAINERS := {
 	"notes": {"name": "學者筆記", "kind": "support", "target": "none", "text": "手牌洗回牌組，再抽 5 張。（支援卡每回合限 1 張）"},
 }
 
+const IMPORT_PREFIX := "x_"    # 批次匯入卡的 id 開頭
+## 牌組編輯的原始屬性篩選 [JSON 屬性, 中文]
+const SRC_TYPES := [["Fighting", "鬥"], ["Psychic", "超"], ["Darkness", "惡"], ["Metal", "鋼"], ["Dragon", "龍"], ["Colorless", "無"]]
 const DECK_SIZE := 30
 const DECK_SIZES := [30, 60]
 const MAX_COPIES := 3
@@ -158,6 +161,8 @@ static var BEASTS: Dictionary = BASE_BEASTS.duplicate()
 static var ENERGY: Dictionary = BASE_ENERGY.duplicate()
 static var TRAINERS: Dictionary = BASE_TRAINERS.duplicate()
 static var custom_art := {}    # 自製卡 id → 圖檔路徑
+static var custom_fx := {}     # 批次匯入卡 id → 效果版本
+static var custom_src := {}    # 批次匯入卡 id → JSON 原始屬性（篩選用，對戰看 type）
 
 
 ## 換成這份自製卡清單；cards = {id: 定義}（見 SaveDB），art_dir 是圖檔資料夾
@@ -166,9 +171,14 @@ static func set_custom(cards: Dictionary, art_dir: String) -> void:
 	ENERGY = BASE_ENERGY.duplicate()
 	TRAINERS = BASE_TRAINERS.duplicate()
 	custom_art = {}
+	custom_fx = {}
+	custom_src = {}
 	for id in cards:
 		var c: Dictionary = cards[id]
 		custom_art[id] = "%s/%s.png" % [art_dir, id]
+		if str(id).begins_with(IMPORT_PREFIX):
+			custom_fx[id] = int(c.get("fx_ver", 1))
+			custom_src[id] = str(c.get("src_type", ""))
 		match str(c.get("kind", "beast")):
 			"energy":
 				ENERGY[id] = {"name": str(c.name), "type": _safe_type(c.get("type"))}
@@ -236,6 +246,15 @@ static func compile_beast(c: Dictionary) -> Dictionary:
 static func can_evolve(base: String, id: String) -> bool:
 	var f := str(BEASTS[id].get("from", ""))
 	return base == f or (f != "" and BEASTS.has(base) and BEASTS.has(f) and BEASTS[base].name == BEASTS[f].name)
+
+
+## 不看卡片在不在：卡包被刪掉的存檔也要認得出是匯入卡
+static func is_imported(id: String) -> bool:
+	return id.begins_with(IMPORT_PREFIX)
+
+
+static func fx_version(id: String) -> int:
+	return int(custom_fx.get(id, 0))
 
 
 static func is_custom(id: String) -> bool:

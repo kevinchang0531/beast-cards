@@ -90,6 +90,11 @@ func _tap_input(e: InputEvent) -> void:
 			hovered.emit(self)
 		elif down_ms > 0 and e.global_position.distance_to(down_pos) > TAP_SLOP:
 			down_ms = 0
+		# 滑鼠按住拖動也能捲動（手指由 ScrollContainer 自己處理）
+		if not down_touch and e.button_mask & MOUSE_BUTTON_MASK_LEFT and e.device != InputEvent.DEVICE_ID_EMULATION:
+			var sc := _scroller()
+			if sc:
+				sc.scroll_vertical -= int(e.relative.y)
 	elif e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 		if e.pressed:
 			down_ms = Time.get_ticks_msec()
@@ -102,6 +107,13 @@ func _tap_input(e: InputEvent) -> void:
 				pressed.emit(self)
 			down_ms = 0
 			holding = false
+
+
+func _scroller() -> ScrollContainer:
+	var n := get_parent()
+	while n != null and not (n is ScrollContainer):
+		n = n.get_parent()
+	return n
 
 
 func _gui_input(e: InputEvent) -> void:

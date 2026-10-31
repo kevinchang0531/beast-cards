@@ -10,6 +10,10 @@ extends RefCounted
 ## 對手場上沒有靈獸、或輪到自己時牌組抽光也算輸。
 ## 位置編號 slot：0 = 戰鬥位置，1～4 = 後備第 1～4 隻。
 
+## 批次匯入卡的效果版本：招式效果或對應規則改了就加 1，舊版本的存檔不能重播。內建卡的存檔沒有這欄
+const FX_VERSION := 1
+static var last_error := ""    # from_save 回傳 null 時的原因
+
 var rng := RandomNumberGenerator.new()
 var seed_value := 0
 var decks: Array = [[], []]
@@ -629,15 +633,59 @@ func _log(s: String) -> void:
 # ---------- 存檔／重播 ----------
 
 func to_save() -> Dictionary:
-	return {"seed": seed_value, "decks": decks, "names": names, "history": history}
+	var d := {"seed": seed_value, "decks": decks, "names": names, "history": history}
+	if _has_imported(decks):
+		d.fx_ver = FX_VERSION
+	return d
 
 
+static func _has_imported(dk: Array) -> bool:
+	for deck in dk:
+		for id in deck:
+			if CardDB.is_imported(str(id)):
+				return true
+	return false
+
+
+## 檢查存檔能不能重播，回傳錯誤訊息，空字串代表可以。只有用到批次匯入卡的對戰要效果版本
+static func save_error(d: Dictionary) -> String:
+	if not _has_imported(d.decks):
+		return ""
+	if d.get("fx_ver") == null:
+		return "這場對戰存檔缺少效果版本，無法重播。"
+	var v := int(d.fx_ver)
+	if v != FX_VERSION:
+		return "這場對戰存檔是效果版本 %d，這個遊戲版本只支援版本 %d，無法重播。" % [v, FX_VERSION]
+	for deck in d.decks:
+		for id in deck:
+			if not CardDB.known(str(id)):
+				return "這場對戰用到的卡片「%s」已經不在了，無法重播。" % str(id)
+			if CardDB.is_imported(str(id)) and CardDB.fx_version(str(id)) != v:
+				return "卡片「%s」是效果版本 %d，和存檔的版本 %d 不同，無法重播。" % [CardDB.card_name(str(id)), CardDB.fx_version(str(id)), v]
+	return ""
+
+
+## 存檔不能重播時回傳 null，原因在 last_error
 static func from_save(d: Dictionary) -> Battle:
+	last_error = save_error(d)
+	if last_error != "":
+		push_error(last_error)
+		return null
 	var b := Battle.new()
 	b.setup(int(d.seed), d.decks[0], d.decks[1], str(d.names[0]), str(d.names[1]))
 	for a in d.history:
 		if not b.apply(a):
+			if d.has("fx_ver"):
+				last_error = "這場對戰存檔重播失敗（第 %d 個動作），無法繼續。" % b.history.size()
+				push_error(last_error)
+				return null
 			push_warning("重播動作失敗：%s" % str(a))
 			break
 	b.events = []
 	return b
+
+
+## 整場狀態的指紋，用來確認相同種子、相同動作得到相同狀態
+func state_hash() -> String:
+	return (JSON.stringify([cards, players, turn, current, first, pending, end_after_pending, winner, win_reason, history, log_lines])
+		+ str(rng.state)).md5_text()

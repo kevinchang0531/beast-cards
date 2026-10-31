@@ -228,6 +228,49 @@ func _test_batch_import() -> void:
 		if acts.is_empty() or not bt.apply(acts[rng.randi_range(0, acts.size() - 1)]):
 			break
 	check(bt.winner >= 0, "批次匯入：匯入卡能打完一場")
+	# 存檔缺效果版本：畫面要說明，不能當掉；玩家可以放棄這場
+	var sv := bt.to_save()
+	check(sv.has("fx_ver"), "批次匯入：對戰存檔有效果版本")
+	sv.erase("fx_ver")
+	main.profile.current_match = {"opp": 0, "save": sv}
+	main.resume_match()
+	await shot("25_save_error")
+	check(_find_ui() == null, "缺少效果版本時顯示錯誤、不進對戰")
+	check(main.profile.current_match is Dictionary, "錯誤畫面不會自動刪掉存檔")
+	main.profile.current_match = null
+	# 牌組編輯篩選：匯入卡歸到屬性裡，也能用原始屬性、階段、卡包找
+	main.db.library.cards["x_T1_3"].src_type = "Darkness"
+	main.db.save_library()
+	main.edit_kind = "all"
+	main.edit_stage = -1
+	main.edit_source = "all"
+	main.edit_type = "leaf"
+	check(main._filter_ok("x_T1_1") and main._filter_ok("sproutbun") and not main._filter_ok("x_T1_3"), "篩選：自製卡歸到遊戲屬性")
+	main.edit_type = "Darkness"
+	check(main._filter_ok("x_T1_3") and not main._filter_ok("embertail"), "篩選：原始屬性")
+	main.edit_type = "fire"
+	main.edit_stage = 1
+	check(main._filter_ok("x_T1_3") and not main._filter_ok("embertail"), "篩選：屬性加階段")
+	main.edit_stage = -1
+	main.edit_type = ""
+	main.edit_source = "set_T1"
+	check(main._filter_ok("x_T1_5") and not main._filter_ok("potion"), "篩選：指定卡包")
+	main.show_deck_editor(0)
+	await shot("26_deck_filter")
+	main.edit_source = "all"
+	# 共享卡包：匯出再匯入到另一個資料庫
+	var text: String = main.db.export_pack(again[0])
+	var other_dir := "user://test_share"
+	DirAccess.make_dir_recursive_absolute(other_dir)
+	var other := SaveDB.new(other_dir)
+	var got := other.import_shared(JSON.parse_string(text))
+	other.save_library()
+	check(got.cards.size() == 5 and got.name == again[0].name, "共享卡包：另一個資料庫匯入整包")
+	check(FileAccess.file_exists(other.custom_dir() + "/x_T1_3.png"), "共享卡包：卡圖一起帶過來")
+	check(int(other.library.cards["x_T1_3"].fx_ver) == Battle.FX_VERSION and CardDB.BEASTS["x_T1_3"].stage == 1, "共享卡包：效果版本與進化保留")
+	other.delete_pack(got)
+	check(other.import_shared({"format": "beast-pack", "id": "bad", "cards": {"../x": {}}, "art": {}}).cards.is_empty(), "共享卡包：壞檔不會寫入")
+	main.db.load_library()
 	main.delete_pack(again[0])
 	check(not CardDB.known("x_T1_1"), "批次匯入：刪除卡包")
 

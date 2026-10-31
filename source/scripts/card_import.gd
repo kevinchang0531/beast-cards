@@ -32,6 +32,7 @@ static func image_name(c: Dictionary) -> String:
 static func to_def(c: Dictionary) -> Dictionary:
 	var def := SaveDB.default_card(0)
 	def.name = str(c.name)
+	def.fx_ver = Battle.FX_VERSION
 	match str(c.supertype):
 		"Trainer":
 			def.kind = "trainer"
@@ -41,6 +42,7 @@ static func to_def(c: Dictionary) -> Dictionary:
 			def.type = type_of(c.get("energyType", c.get("pokemonType")))
 		_:
 			def.type = type_of(c.get("pokemonType"))
+			def.src_type = str(c.get("pokemonType"))
 			def.hp = clampi(int(c.get("hp", 60) if c.get("hp") != null else 60), 10, 300)
 			var retreat = c.get("retreatCost")
 			def.retreat = mini(retreat.size(), CardDB.MAX_COST) if retreat is Array else 0

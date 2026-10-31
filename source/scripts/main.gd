@@ -22,6 +22,10 @@ var secret_start := 0
 func _ready() -> void:
 	rng.randomize()
 	theme = _make_theme()
+	# 捲軸預設太細不好拉，全部加寬
+	get_tree().node_added.connect(func(n):
+		if n is VScrollBar:
+			n.custom_minimum_size.x = 22)
 	backdrop = TextureRect.new()
 	backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -503,7 +507,25 @@ func start_ai_match(i: int) -> void:
 func resume_match() -> void:
 	var cm: Dictionary = profile.current_match
 	var b := Battle.from_save(cm.save)
+	if b == null:
+		_show_save_error(Battle.last_error)
+		return
 	_run_ai_battle(b, int(cm.opp))
+
+
+## 存檔不能重播：說明原因，玩家決定要不要放棄這場（重新匯入相符的版本後還能繼續，所以不自動刪）
+func _show_save_error(err: String) -> void:
+	var s := _clear()
+	var p := _panel(s, Rect2(290, 220, 700, 270))
+	_label(p, "無法繼續這場對戰", Vector2(30, 20), 30, Vector2.ZERO, Color("ff9a9a"))
+	var msg := _label(p, err, Vector2(30, 80), 20, Vector2(640, 90))
+	msg.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	msg.set_deferred("size", Vector2(640, 90))
+	_button(p, "返回", Rect2(120, 190, 200, 56), show_menu)
+	_button(p, "放棄這場對戰", Rect2(380, 190, 200, 56), func():
+		profile.current_match = null
+		_save()
+		show_menu())
 
 
 func _run_ai_battle(b: Battle, i: int) -> void:
@@ -693,7 +715,11 @@ func show_shop() -> void:
 
 var edit_deck: Array = []
 var edit_index := 0
-var edit_filter := "all"
+var edit_type := ""       # 遊戲屬性或 JSON 原始屬性，空字串不限
+var edit_kind := "all"
+var edit_stage := -1
+var edit_source := "all"  # all、base、custom 或卡包 id
+var pack_scroll := 0
 var edit_size := CardDB.DECK_SIZE
 var preview: CardView
 
@@ -756,15 +782,36 @@ func _draw_editor() -> void:
 		else:
 			_save()
 			_toast("已儲存，但還不能使用：" + err, Color("ffb070")))
-	# 篩選
-	var filters := [["all", "全部"], ["fire", "火"], ["water", "水"], ["leaf", "草"], ["thunder", "雷"], ["rock", "岩"],
-		["energy", "能量"], ["trainer", "訓練家"], ["custom", "自製"]]
-	for i in filters.size():
-		var f: Array = filters[i]
-		var b := _button(s, f[1], Rect2(14 + i * 98, 76, 92, 36), func():
-			edit_filter = f[0]
-			_draw_editor_lists(s), 17)
-		b.modulate = Color.WHITE if edit_filter == f[0] else Color(0.7, 0.7, 0.7)
+	# 篩選：屬性、種類、階段、來源可以疊加
+	var redraw := func():
+		profile.decks[edit_index].name = name_edit.text
+		_draw_editor()
+	var chip := func(t: String, r: Rect2, on: bool, cb: Callable):
+		var b := _button(s, t, r, func():
+			cb.call()
+			redraw.call(), 16)
+		b.modulate = Color.WHITE if on else Color(0.65, 0.65, 0.65)
+	var types: Array = [["", "不限"]]
+	for t in CardDB.TYPES:
+		types.append([t, CardDB.TYPE_NAME[t]])
+	types += CardDB.SRC_TYPES
+	for i in types.size():
+		var t: Array = types[i]
+		chip.call(t[1], Rect2(14 + i * 73, 72, 69, 32), edit_type == t[0], func(): edit_type = t[0])
+	var kinds := [["all", "全部"], ["beast", "靈獸"], ["trainer", "訓練家"], ["energy", "能量"]]
+	for i in kinds.size():
+		var k: Array = kinds[i]
+		chip.call(k[1], Rect2(14 + i * 73, 108, 69, 32), edit_kind == k[0], func(): edit_kind = k[0])
+	var stages := [[-1, "不限"], [0, "基礎"], [1, "一階"], [2, "二階"]]
+	for i in stages.size():
+		var g: Array = stages[i]
+		chip.call(g[1], Rect2(310 + i * 63, 108, 59, 32), edit_stage == g[0], func(): edit_stage = g[0])
+	var sources: Array = [["all", "全部卡片"], ["base", "內建卡"], ["custom", "全部自製卡"]]
+	for pk in db.library.packs:
+		sources.append([pk.id, pk.name])
+	_opt(s, Rect2(566, 108, 324, 32), sources.map(func(x): return x[1]), maxi(0, sources.map(func(x): return x[0]).find(edit_source)), func(i):
+		edit_source = sources[i][0]
+		redraw.call())
 	_draw_editor_lists(s)
 	preview = CardView.new()
 	preview.size = Vector2(360, 504)
@@ -793,8 +840,8 @@ func _draw_editor_lists(s: Control) -> void:
 	# 左：收藏
 	var scroll := ScrollContainer.new()
 	scroll.name = "coll"
-	scroll.position = Vector2(10, 118)
-	scroll.size = Vector2(880, 594)
+	scroll.position = Vector2(10, 144)
+	scroll.size = Vector2(884, 568)
 	s.add_child(scroll)
 	var grid := GridContainer.new()
 	grid.columns = 7
@@ -878,16 +925,27 @@ func _draw_editor_lists(s: Control) -> void:
 
 
 func _filter_ok(id: String) -> bool:
-	match edit_filter:
-		"all": return true
-		"energy": return CardDB.is_energy(id)
-		"trainer": return CardDB.is_trainer(id)
-		"custom": return CardDB.is_custom(id)
-	if CardDB.is_beast(id):
-		return CardDB.BEASTS[id].type == edit_filter
-	if CardDB.is_energy(id):
-		return CardDB.ENERGY[id].type == edit_filter
-	return false
+	match edit_kind:
+		"beast": if not CardDB.is_beast(id): return false
+		"trainer": if not CardDB.is_trainer(id): return false
+		"energy": if not CardDB.is_energy(id): return false
+	match edit_source:
+		"all": pass
+		"base": if CardDB.is_custom(id): return false
+		"custom": if not CardDB.is_custom(id): return false
+		_:
+			var packs: Array = db.library.packs.filter(func(x): return x.id == edit_source)
+			if packs.is_empty() or not packs[0].cards.has(id):
+				return false
+	if edit_stage >= 0 and not (CardDB.is_beast(id) and CardDB.BEASTS[id].stage == edit_stage):
+		return false
+	if edit_type == "":
+		return true
+	if edit_type in CardDB.TYPES:
+		if CardDB.is_beast(id):
+			return CardDB.BEASTS[id].type == edit_type
+		return CardDB.is_energy(id) and CardDB.ENERGY[id].type == edit_type
+	return CardDB.custom_src.get(id, "") == edit_type
 
 
 ## 依收藏自動組一副：挑擁有最多靈獸的兩種屬性；60 張時每種卡的張數都放大兩倍
@@ -942,11 +1000,14 @@ func show_import() -> void:
 		Vector2(30, 62), 18, Vector2(940, 80))
 	help.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	help.set_deferred("size", Vector2(940, 80))
-	_button(p, "選擇圖片匯入", Rect2(30, 150, 300, 60), func():
-		FilePick.pick(self, true, func(images: Array): import_images(images)), 24)
-	_button(p, "用內建圖片做範例卡包", Rect2(345, 150, 300, 60), import_example, 20)
-	var batch := _button(p, "批次匯入 JSON", Rect2(660, 150, 310, 60), func():
-		FilePick.pick_folder(self, import_batch), 24)
+	_button(p, "選擇圖片匯入", Rect2(30, 150, 220, 60), func():
+		FilePick.pick(self, true, func(images: Array): import_images(images)), 20)
+	_button(p, "範例卡包", Rect2(262, 150, 200, 60), import_example, 20)
+	var batch := _button(p, "批次匯入 JSON", Rect2(474, 150, 240, 60), func():
+		FilePick.pick_folder(self, import_batch), 20)
+	var shared := _button(p, "匯入分享檔", Rect2(726, 150, 244, 60), func():
+		FilePick.pick_folder(self, import_batch, false), 20)
+	shared.tooltip_text = "匯入別人用「分享」匯出的卡包檔。"
 	batch.tooltip_text = "選一個資料夾，裡面每個卡片 JSON 變成一個卡包；屬性、招式、進化自動對應，之後可以再編輯。同系列重新匯入會覆蓋。"
 	_label(p, "已匯入的卡包", Vector2(30, 226), 22, Vector2.ZERO, Color("ffe27a"))
 	var sc := ScrollContainer.new()
@@ -965,7 +1026,10 @@ func show_import() -> void:
 		row.custom_minimum_size = Vector2(920, 56)
 		vb.add_child(row)
 		_label(row, "%s（%d 張）" % [pack.name, pack.cards.size()], Vector2(6, 12), 22)
-		_button(row, "編輯", Rect2(620, 4, 130, 46), show_pack_editor.bind(pack))
+		_button(row, "分享", Rect2(490, 4, 130, 46), func():
+			FilePick.save_text(self, "%s.json" % str(pack.name).validate_filename(), db.export_pack(pack), func():
+				_toast("已匯出分享檔，把檔案傳給朋友，用「匯入分享檔」就有同一包")))
+		_button(row, "編輯", Rect2(630, 4, 130, 46), show_pack_editor.bind(pack))
 		var del := _button(row, "刪除", Rect2(770, 4, 130, 46), func(): pass)
 		del.pressed.connect(func():
 			if del.text == "刪除":
@@ -996,6 +1060,13 @@ func import_batch(files: Dictionary) -> Array:
 	var total := 0
 	var no_art := 0
 	for jname in files.jsons:
+		var shared = JSON.parse_string(files.jsons[jname])
+		if SaveDB.is_shared(shared):
+			var sp := db.import_shared(shared)
+			if not sp.cards.is_empty():
+				total += sp.cards.size()
+				done.append(sp)
+			continue
 		var cards: Array = CardImport.parse(files.jsons[jname])
 		if cards.is_empty():
 			continue
@@ -1008,7 +1079,7 @@ func import_batch(files: Dictionary) -> Array:
 			if not (img is Image):
 				no_art += 1
 				continue
-			var id := "x_%s_%s" % [code, str(cards[i].get("id", i))]
+			var id := "%s%s_%s" % [CardDB.IMPORT_PREFIX, code, str(cards[i].get("id", i))]
 			CardView._tex_cache.erase("%s/%s.png" % [db.custom_dir(), id])
 			if db.add_set_card(pack, id, CardImport.to_def(cards[i]), img):
 				total += 1
@@ -1061,6 +1132,8 @@ func delete_pack(pack: Dictionary) -> void:
 
 
 func show_pack_editor(pack: Dictionary, id := "") -> void:
+	if edit_pack != pack:
+		pack_scroll = 0
 	edit_pack = pack
 	if pack.cards.is_empty():
 		show_import()
@@ -1079,6 +1152,9 @@ func show_pack_editor(pack: Dictionary, id := "") -> void:
 	scroll.position = Vector2(10, 76)
 	scroll.size = Vector2(464, 636)
 	s.add_child(scroll)
+	# 點卡片會重畫整個畫面，捲動位置要留著
+	scroll.set_deferred("scroll_vertical", pack_scroll)
+	scroll.get_v_scroll_bar().value_changed.connect(func(v): pack_scroll = int(v))
 	var grid := GridContainer.new()
 	grid.columns = 4
 	grid.add_theme_constant_override("h_separation", 6)
@@ -1086,7 +1162,7 @@ func show_pack_editor(pack: Dictionary, id := "") -> void:
 	scroll.add_child(grid)
 	for cid in pack.cards:
 		var cv := CardView.new().setup(cid, "full")
-		cv.custom_minimum_size = Vector2(108, 151)
+		cv.custom_minimum_size = Vector2(103, 144)
 		cv.selected = cid == edit_card
 		cv.use_tap_mode()
 		cv.pressed.connect(func(_v): show_pack_editor(pack, cid))
