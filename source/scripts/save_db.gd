@@ -15,6 +15,7 @@ extends RefCounted
 
 const DEFAULT_DIR := "user://saves"
 const MAX_HISTORY := 200
+const MAX_REPLAYS := 20   # 只有最近幾場留回放，存檔才不會越來越大
 const ART_SIZE := 256
 const AVATAR_SIZE := 192
 const MAX_PACK_CARDS := 40
@@ -155,7 +156,7 @@ static func fill_collection(p: Dictionary) -> int:
 
 
 ## 記錄一場對戰結果並存檔
-static func add_result(p: Dictionary, mode: String, opp: String, won: bool, turns: int, stars: int, kos: int) -> void:
+static func add_result(p: Dictionary, mode: String, opp: String, won: bool, turns: int, stars: int, kos: int, replay := {}) -> void:
 	var s: Dictionary = p.stats
 	s.games += 1
 	s.kos += kos
@@ -169,8 +170,12 @@ static func add_result(p: Dictionary, mode: String, opp: String, won: bool, turn
 			s.online_wins += 1
 	p.history.push_front({"date": Time.get_datetime_string_from_system(false, true), "mode": mode, "opp": opp,
 		"won": won, "turns": turns, "stars": stars})
+	if not replay.is_empty():
+		p.history[0].replay = replay
 	if p.history.size() > MAX_HISTORY:
 		p.history.resize(MAX_HISTORY)
+	for i in range(MAX_REPLAYS, p.history.size()):
+		p.history[i].erase("replay")
 
 
 ## 開卡包：5 張，最後一張至少不普通，有 1/4 機會是稀有進化靈獸

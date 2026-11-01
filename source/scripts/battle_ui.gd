@@ -2,7 +2,8 @@ class_name BattleUI
 extends Control
 ## 對戰畫面：顯示場面、處理玩家點擊、驅動電腦或線上對手、播放動畫音效。
 ## 用法：var ui := BattleUI.new(); add_child(ui); ui.start(battle, me, opts)
-## opts：{kind: "ai"/"online", level, opp_avatar, my_avatar, code, autosave: Callable(save_dict)}
+## opts：{kind: "ai"/"online"/"replay", level, opp_avatar, my_avatar, code, autosave: Callable(save_dict), actions}
+## kind 是 replay 時 battle 要是剛 setup 好的對局，由 actions 一步一步播
 ## 結束時發出 finished({won, turns, stars, kos, surrendered, paused})
 
 signal finished(result: Dictionary)
@@ -33,6 +34,12 @@ var sending := false
 var wait_time := 0.0
 var done := false
 var log_shown := 0
+var rep_actions: Array = []  # 回放：要播的動作
+var rep_i := 0
+var rep_paused := false
+var rep_speed := 1
+var rep_timer := 0.0
+var base_scale := 1.0
 
 var board: Control
 var detail: CardView
@@ -45,6 +52,9 @@ var end_btn: Button
 var info := [{}, {}]
 var slot_views := {}        # "p:slot" → CardView
 var result_panel: Control
+var rep_label: Label
+var rep_play: Button
+var rep_speed_btn: Button
 
 
 func start(battle: Battle, my_index: int, o: Dictionary) -> void:
@@ -55,6 +65,10 @@ func start(battle: Battle, my_index: int, o: Dictionary) -> void:
 	position = Vector2.ZERO
 	size = Vector2(1280, 720)
 	_build()
+	if _is_replay():
+		rep_actions = opts.get("actions", [])
+		base_scale = Engine.time_scale
+		_build_replay()
 	_render()
 	Audio.bgm("bgm_boss" if int(opts.get("level", 0)) >= 3 else "bgm_battle")
 	_show_banner("對戰開始！" + ("你先攻" if b.first == me else "對手先攻"))
@@ -136,6 +150,60 @@ func _build() -> void:
 	banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	banner.modulate.a = 0
 	add_child(banner)
+
+
+## 回放的控制鈕放在攻擊鈕的位置
+func _build_replay() -> void:
+	retreat_btn.visible = false
+	end_btn.visible = false
+	rep_play = _button("暫停", Rect2(1040, 326, 116, 48), _on_rep_play)
+	_button("下一步", Rect2(1160, 326, 116, 48), _on_rep_step)
+	rep_speed_btn = _button("速度 1 倍", Rect2(1040, 378, 116, 48), _on_rep_speed)
+	_button("從頭看", Rect2(1160, 378, 116, 48), func(): _finish({"restart": true}))
+	rep_label = _label("", Vector2(1040, 432), 18, Vector2(236, 36))
+	rep_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_update_replay()
+
+
+func _is_replay() -> bool:
+	return opts.get("kind") == "replay"
+
+
+func _update_replay() -> void:
+	rep_label.text = "回放 %d／%d" % [rep_i, rep_actions.size()]
+	rep_play.text = "播放" if rep_paused else "暫停"
+	rep_speed_btn.text = "速度 %d 倍" % rep_speed
+
+
+func _on_rep_play() -> void:
+	rep_paused = not rep_paused
+	_update_replay()
+
+
+func _on_rep_step() -> void:
+	rep_paused = true
+	if not busy:
+		_rep_next()
+	_update_replay()
+
+
+func _on_rep_speed() -> void:
+	rep_speed = {1: 2, 2: 4, 4: 1}[rep_speed]
+	Engine.time_scale = base_scale * rep_speed
+	_update_replay()
+
+
+func _rep_next() -> void:
+	if rep_i >= rep_actions.size() or done:
+		return
+	var a: Dictionary = rep_actions[rep_i]
+	rep_i += 1
+	_update_replay()
+	if not b.apply(a):
+		rep_paused = true
+		msg.text = "第 %d 步播放失敗" % rep_i
+		return
+	_after_apply()
 
 
 func _panel(r: Rect2) -> Panel:
@@ -226,7 +294,7 @@ func _render() -> void:
 	var n := hand.size()
 	var step := minf(102.0, (830.0 - HAND_SIZE.x) / maxf(1, n - 1))
 	var x0 := CENTER_X - (step * (n - 1) + HAND_SIZE.x) / 2
-	var my_turn := b.actor() == me and b.winner < 0 and b.pending.is_empty()
+	var my_turn := b.actor() == me and b.winner < 0 and b.pending.is_empty() and not _is_replay()
 	for i in n:
 		var cv := CardView.new().setup(b.card_id(hand[i]), "full")
 		cv.position = Vector2(x0 + i * step, HAND_Y)
@@ -303,11 +371,11 @@ func _update_side() -> void:
 		var sb: StyleBoxFlat = info[who].box.get_theme_stylebox("panel")
 		sb.border_color = Color("ffd84a") if b.current == who and b.winner < 0 else Color(0.5, 0.5, 0.6, 0.6)
 		sb.set_border_width_all(4 if b.current == who else 2)
-	var my_turn := b.actor() == me and b.winner < 0 and b.pending.is_empty() and not busy
+	var my_turn := b.actor() == me and b.winner < 0 and b.pending.is_empty() and not busy and not _is_replay()
 	var act = b.players[me].active
 	for n in 2:
 		var bt: Button = atk_btns[n]
-		if act == null or n >= b.beast_data(act).attacks.size():
+		if _is_replay() or act == null or n >= b.beast_data(act).attacks.size():
 			bt.visible = false
 			continue
 		bt.visible = true
@@ -325,7 +393,7 @@ func _update_side() -> void:
 	retreat_btn.disabled = not (my_turn and can_retreat)
 	end_btn.disabled = not my_turn
 	# 訊息
-	if b.winner >= 0:
+	if b.winner >= 0 or _is_replay():
 		msg.text = ""
 	elif b.actor() == me and not b.pending.is_empty():
 		msg.text = "你的靈獸被擊倒了！\n請點一隻後備靈獸上場"
@@ -383,7 +451,7 @@ func _on_hover(cv: CardView) -> void:
 
 
 func _can_input() -> bool:
-	return not busy and not done and b.winner < 0 and b.actor() == me
+	return not busy and not done and b.winner < 0 and b.actor() == me and not _is_replay()
 
 
 func _on_hand_pressed(cv: CardView) -> void:
@@ -491,6 +559,9 @@ func _on_end() -> void:
 
 
 func _on_menu() -> void:
+	if _is_replay():
+		_finish({})
+		return
 	var dlg := ConfirmationDialog.new()
 	if opts.get("kind") == "ai":
 		dlg.dialog_text = "要離開對戰嗎？\n「暫停離開」會保留進度，下次從主選單繼續。\n「投降」算輸一場。"
@@ -598,7 +669,10 @@ func _after_apply() -> void:
 			"turn":
 				await get_tree().create_timer(0.25).timeout
 				Audio.play("turn")
-				_show_banner("你的回合" if ev.p == me else "對手的回合")
+				if _is_replay():
+					_show_banner(b.names[ev.p] + " 的回合")
+				else:
+					_show_banner("你的回合" if ev.p == me else "對手的回合")
 			"draw":
 				if ev.p == me:
 					Audio.play("draw")
@@ -646,7 +720,7 @@ func _after_apply() -> void:
 	_update_side()
 	if b.winner >= 0:
 		_show_result()
-	elif b.actor() == me and not b.pending.is_empty():
+	elif b.actor() == me and not b.pending.is_empty() and not _is_replay():
 		sel_mode = "promote"
 		sel_cands = b.legal_actions(me)
 		_render()
@@ -661,6 +735,13 @@ func _flash_slot(who: int, slot: int) -> void:
 # ---------- 對手驅動 ----------
 
 func _process(delta: float) -> void:
+	if _is_replay():
+		if not done and not busy and not rep_paused and b.winner < 0:
+			rep_timer += delta
+			if rep_timer >= 0.7:
+				rep_timer = 0.0
+				_rep_next()
+		return
 	if done or busy or b == null or b.winner >= 0 or b.actor() == me:
 		wait_time = 0.0
 		return
@@ -708,8 +789,11 @@ func _show_result() -> void:
 	var r := _label(b.win_reason + "\n共 %d 回合" % b.turn, Vector2(0, 110), 20, Vector2(500, 70))
 	r.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	result_panel.add_child(r)
+	if _is_replay():
+		t.text = "回放結束"
+		r.text = "%s 獲勝：%s\n共 %d 回合" % [b.names[b.winner], b.win_reason, b.turn]
 	var bt := Button.new()
-	bt.text = "回到選單"
+	bt.text = "回到紀錄" if _is_replay() else "回到選單"
 	bt.position = Vector2(170, 210)
 	bt.size = Vector2(160, 54)
 	bt.pressed.connect(func():
@@ -724,6 +808,10 @@ func _finish(extra: Dictionary) -> void:
 	done = true
 	var res := {"won": b.winner == me, "turns": b.turn, "stars": b.players[me].stars,
 		"kos": b.players[me].stars, "over": b.winner >= 0}
+	if _is_replay():
+		Engine.time_scale = base_scale
+	elif b.winner >= 0:
+		res.replay = {"save": b.to_save(), "me": me, "my_avatar": opts.get("my_avatar", "av_boy"), "opp_avatar": opts.get("opp_avatar", "av_cool")}
 	res.merge(extra, true)
 	finished.emit(res)
 

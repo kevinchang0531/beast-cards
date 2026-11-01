@@ -556,7 +556,7 @@ func _on_ai_finished(res: Dictionary, i: int) -> void:
 			note = "（第一次打贏，額外 +100！）"
 		profile.beaten[o.id] = int(profile.beaten.get(o.id, 0)) + 1
 	profile.coins += gain
-	SaveDB.add_result(profile, "ai", o.name, res.won, res.turns, res.stars, res.kos)
+	SaveDB.add_result(profile, "ai", o.name, res.won, res.turns, res.stars, res.kos, res.get("replay", {}))
 	_save()
 	show_menu()
 	Audio.play("buy")
@@ -646,7 +646,7 @@ func _start_online(code: String, room: Dictionary, me: int) -> void:
 		if res.get("over", false):
 			var gain := 100 if res.won else 30
 			profile.coins += gain
-			SaveDB.add_result(profile, "online", str(room.guest if me == 0 else room.host), res.won, res.turns, res.stars, res.kos)
+			SaveDB.add_result(profile, "online", str(room.guest if me == 0 else room.host), res.won, res.turns, res.stars, res.kos, res.get("replay", {}))
 			_save()
 			show_menu()
 			_toast("線上對戰結束，獲得 %d 金幣" % gain)
@@ -1257,11 +1257,13 @@ func show_records() -> void:
 	_label(p, lines, Vector2(20, 60), 19, Vector2(340, 400))
 	var p2 := _panel(s, Rect2(440, 90, 800, 540))
 	_label(p2, "對戰紀錄（最近 %d 場）" % profile.history.size(), Vector2(20, 14), 28, Vector2.ZERO, Color("ffe27a"))
+	_label(p2, "最近 %d 場打完的對戰可以回放" % SaveDB.MAX_REPLAYS, Vector2(460, 24), 16, Vector2(320, 24), Color("aab4c8")).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	var sc := ScrollContainer.new()
 	sc.position = Vector2(16, 60)
 	sc.size = Vector2(768, 466)
 	p2.add_child(sc)
 	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(vb)
 	if profile.history.is_empty():
 		var l := Label.new()
@@ -1273,8 +1275,37 @@ func show_records() -> void:
 			"勝" if h.won else "敗", int(h.turns), int(h.stars)]
 		l.add_theme_color_override("font_color", Color("7dff9a") if h.won else Color("ff9a9a"))
 		l.add_theme_font_size_override("font_size", 17)
-		vb.add_child(l)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var row := HBoxContainer.new()
+		row.add_child(l)
+		if h.has("replay"):
+			var bt := Button.new()
+			bt.text = "回放"
+			bt.custom_minimum_size = Vector2(80, 34)
+			bt.pressed.connect(show_replay.bind(h))
+			row.add_child(bt)
+		vb.add_child(row)
 	_button(s, "返回", Rect2(560, 650, 160, 50), show_menu)
+
+
+## 回放一場打完的對戰：先重播一次確認存檔能用，再從頭一步一步播
+func show_replay(h: Dictionary) -> void:
+	var rp: Dictionary = h.replay
+	var sv: Dictionary = rp.save
+	if Battle.from_save(sv) == null:
+		_toast(Battle.last_error, Color("ff7070"))
+		return
+	var b := Battle.new()
+	b.setup(int(sv.seed), sv.decks[0], sv.decks[1], str(sv.names[0]), str(sv.names[1]))
+	var s := _clear("bg_battle", "")
+	var ui := BattleUI.new()
+	s.add_child(ui)
+	ui.start(b, int(rp.me), {"kind": "replay", "level": 1, "actions": sv.history, "my_avatar": rp.my_avatar, "opp_avatar": rp.opp_avatar})
+	ui.finished.connect(func(res):
+		if res.get("restart", false):
+			show_replay(h)
+		else:
+			show_records())
 
 
 func show_rules() -> void:

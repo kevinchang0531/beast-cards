@@ -108,6 +108,7 @@ func _run() -> void:
 	check(main.profile.coins == coins_before + (160 if won else 20), "金幣獎勵正確（%s）" % ("勝" if won else "敗"))
 	reloaded = main.db.load_profile("測試小明")
 	check(reloaded.history.size() == 1, "戰績有寫進存檔")
+	await _test_replay(reloaded)
 
 	# --- 暫停與繼續 ---
 	main.start_ai_match(0)
@@ -487,6 +488,57 @@ func _test_new_features() -> void:
 	main.show_menu()
 	main.show_deck_editor()
 	await shot("28_deck_after_delete")
+
+
+## 回放：讀回存檔的紀錄，從戰績按鈕進入，播完要和原本打完的狀態相同
+func _test_replay(saved: Dictionary) -> void:
+	var h: Dictionary = saved.history[0]
+	check(h.has("replay"), "回放：打完的對戰有存回放")
+	var want: String = Battle.from_save(h.replay.save).state_hash()
+	main.show_records()
+	await get_tree().process_frame
+	await shot("08b_records_replay")
+	var bt := _find_button(main.screen, "回放")
+	check(bt != null, "回放：戰績列有回放鈕")
+	bt.pressed.emit()
+	await get_tree().process_frame
+	var ui: BattleUI = _find_ui()
+	check(ui != null and ui.b.history.is_empty(), "回放：從第一步開始")
+	check(not ui._can_input(), "回放：不能操作")
+	await get_tree().create_timer(4.0).timeout
+	check(ui.rep_i > 0, "回放：自動往下播")
+	await shot("13b_replay_mid")
+	_find_button(ui, "暫停").pressed.emit()
+	await get_tree().create_timer(0.1).timeout
+	var at: int = ui.rep_i
+	await get_tree().create_timer(2.0).timeout
+	check(ui.rep_i == at, "回放：暫停會停住")
+	while ui.busy:
+		await get_tree().process_frame
+	_find_button(ui, "下一步").pressed.emit()
+	check(ui.rep_i == at + 1, "回放：下一步走一步")
+	ui.rep_paused = false
+	_find_button(ui, "速度").pressed.emit()
+	_find_button(ui, "速度").pressed.emit()
+	check(Engine.time_scale == 12.0, "回放：速度可以調")
+	var guard := 0
+	while ui.b.winner < 0 and guard < 60000:
+		guard += 1
+		await get_tree().process_frame
+	check(ui.b.state_hash() == want or ui.b.history.size() == ui.rep_actions.size(), "回放：播到結束")
+	check(ui.b.state_hash() == want, "回放：結果和原本相同")
+	await get_tree().create_timer(3.0).timeout
+	await shot("13c_replay_end")
+	ui._finish({})
+	await get_tree().process_frame
+	check(Engine.time_scale == 3.0, "回放：離開後速度還原")
+	check(_find_ui() == null and _find_button(main.screen, "回放") != null, "回放：離開回到戰績")
+	var p := {"history": [], "stats": {"games": 0, "wins": 0, "losses": 0, "kos": 0, "online_games": 0, "online_wins": 0}}
+	for i in 25:
+		SaveDB.add_result(p, "ai", "x", true, 1, 1, 0, {"save": {}})
+	check(p.history[19].has("replay") and not p.history[20].has("replay"), "回放：只留最近 20 場")
+	var big: Dictionary = h.replay
+	print("  回放一場約 %d 位元組" % JSON.stringify(big).to_utf8_buffer().size())
 
 
 func _find_ui() -> BattleUI:
