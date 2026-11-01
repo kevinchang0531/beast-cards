@@ -3,11 +3,8 @@ extends RefCounted
 ## 批次匯入：把外部卡片 JSON（一個系列一個檔）轉成自製卡定義（格式見 SaveDB）。
 ## JSON 是卡片陣列：{id, name, supertype, subtype, setCode, imageUrl, hp, pokemonType, stage, evolvesFrom,
 ## retreatCost, attacks: [{name, cost, damage, effect}], rulesText}。
-## 外部屬性併進遊戲的 5 屬性；招式效果從說明文字找對應的 fx，找不到就只留傷害；特性、弱點、抵抗力不匯入。
+## 屬性對應見 AttrRules；招式效果從說明文字找對應的 fx，找不到就只留傷害；特性、弱點、抵抗力不匯入。
 
-## 外部屬性 → 遊戲屬性（招式費用也照這張表，對不上卡片屬性的費用算任意能量）
-const TYPE_MAP := {"Fire": "fire", "Darkness": "fire", "Water": "water", "Dragon": "water", "Grass": "leaf",
-	"Colorless": "leaf", "Lightning": "thunder", "Psychic": "thunder", "Fighting": "rock", "Metal": "rock"}
 const DISCARD_ALL := 4    # 「能量全部丟棄」對應的 self_discard 數值（費用上限）
 const DRAW_UP_TO := 3     # 「抽到手牌滿 N 張」對應的抽牌數
 
@@ -21,7 +18,7 @@ static func parse(text: String) -> Array:
 
 
 static func type_of(t) -> String:
-	return TYPE_MAP.get(str(t), "fire")
+	return AttrRules.key_of(str(t))
 
 
 ## JSON 裡的圖檔只取檔名，圖片用檔名配對（手機沒辦法選資料夾，只能選一堆檔案）
@@ -64,13 +61,15 @@ static func attack_def(a: Dictionary, t: String) -> Dictionary:
 	var n_any := 0
 	var cost = a.get("cost")
 	for e in (cost if cost is Array else []):
-		if str(e) != "Colorless" and type_of(e) == t:
+		if type_of(e) == t and t != "any":
 			n_type += 1
 		else:
 			n_any += 1
 	n_any = mini(n_any, maxi(CardDB.MAX_COST - n_type, 0))
 	n_type = mini(n_type, CardDB.MAX_COST)
 	var out := {"name": str(a.get("name", "")), "dmg": 0, "n_type": n_type, "n_any": n_any, "fx": "", "v": 0}
+	if cost is Array and not cost.is_empty():
+		out.cost = AttrRules.cost_keys(cost)
 	out.merge(read_effect(str(a.get("damage", "")), str(a.get("effect", "")), n_type + n_any), true)
 	return out
 

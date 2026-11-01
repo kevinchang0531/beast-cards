@@ -945,7 +945,10 @@ func _filter_ok(id: String) -> bool:
 		if CardDB.is_beast(id):
 			return CardDB.BEASTS[id].type == edit_type
 		return CardDB.is_energy(id) and CardDB.ENERGY[id].type == edit_type
-	return CardDB.custom_src.get(id, "") == edit_type
+	var key := AttrRules.key_of(edit_type)
+	if CardDB.is_energy(id):
+		return CardDB.ENERGY[id].type == key
+	return CardDB.custom_src.get(id, "") == edit_type or (CardDB.is_beast(id) and CardDB.BEASTS[id].type == key)
 
 
 ## 依收藏自動組一副：挑擁有最多靈獸的兩種屬性；60 張時每種卡的張數都放大兩倍
@@ -1008,6 +1011,11 @@ func show_import() -> void:
 	var shared := _button(p, "匯入分享檔", Rect2(726, 150, 244, 60), func():
 		FilePick.pick_folder(self, import_batch, false), 20)
 	shared.tooltip_text = "匯入別人用「分享」匯出的卡包檔。"
+	var old := db.old_attr_count()
+	if old > 0:
+		_button(p, "舊卡換成 10 屬性（%d 張）" % old, Rect2(640, 218, 330, 38), func():
+			_toast("已更新 %d 張卡；牌組的能量要換成對應屬性" % db.migrate_attrs(), Color("7dff9a"))
+			_reload_after_migrate(), 16).tooltip_text = "依原始屬性還原超、惡、鋼、龍、無色。混合費用要重新批次匯入才有；用到舊卡的回放會變成不能看。"
 	batch.tooltip_text = "選一個資料夾，裡面每個卡片 JSON 變成一個卡包；屬性、招式、進化自動對應，之後可以再編輯。同系列重新匯入會覆蓋。"
 	_label(p, "已匯入的卡包", Vector2(30, 226), 22, Vector2.ZERO, Color("ffe27a"))
 	var sc := ScrollContainer.new()
@@ -1100,6 +1108,12 @@ func import_batch(files: Dictionary) -> Array:
 	return done
 
 
+func _reload_after_migrate() -> void:
+	CardDB.set_custom(db.library.cards, db.custom_dir())
+	_save()
+	show_import()
+
+
 ## 範例：拿內建卡圖做一包，靈獸、進化、訓練家、能量各一種示範
 func import_example() -> Dictionary:
 	var files := ["b_embertail", "b_blazecrown", "b_bubbotter", "t_potion", "e_water"]
@@ -1185,7 +1199,8 @@ func set_card(key: String, v) -> void:
 func _draw_card_form(f: Control) -> void:
 	var c: Dictionary = db.library.cards[edit_card]
 	var kinds := ["beast", "trainer", "energy"]
-	var type_names: Array = CardDB.TYPES.map(func(t): return CardDB.TYPE_NAME[t])
+	var edit_types: Array = CardDB.ALL_TYPES + ["any"]
+	var type_names: Array = edit_types.map(func(t): return CardDB.TYPE_NAME[t])
 	var redraw := func(): show_pack_editor(edit_pack, edit_card)
 	_label(f, "種類", Vector2(14, 20), 18)
 	_opt(f, Rect2(66, 12, 150, 40), ["靈獸", "訓練家", "能量"], kinds.find(c.kind), func(i):
@@ -1203,8 +1218,8 @@ func _draw_card_form(f: Control) -> void:
 		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		return
 	_label(f, "屬性", Vector2(14, 76), 18)
-	_opt(f, Rect2(66, 68, 150, 40), type_names, CardDB.TYPES.find(c.type), func(i):
-		set_card("type", CardDB.TYPES[i])
+	_opt(f, Rect2(66, 68, 150, 40), type_names, edit_types.find(c.type), func(i):
+		set_card("type", edit_types[i])
 		redraw.call())
 	if c.kind == "energy":
 		return
@@ -1225,6 +1240,8 @@ func _draw_card_form(f: Control) -> void:
 		var y := 180 + n * 226
 		var set_atk := func(key: String, v):
 			a[key] = v
+			if key in ["n_type", "n_any"]:
+				a.erase("cost")
 			set_card("attacks", c.attacks)
 		_label(f, "招式 %d%s" % [n + 1, "（名字留空就沒有這招）" if n == 1 else ""], Vector2(14, y), 18, Vector2.ZERO, Color("ffe27a"))
 		_label(f, "名字", Vector2(14, y + 38), 18)

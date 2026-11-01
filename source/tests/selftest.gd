@@ -203,11 +203,11 @@ func _test_batch_import() -> void:
 	check(packs.size() == 1 and packs[0].cards.size() == 5, "批次匯入：一個 JSON 一個卡包，壞檔和沒圖的略過")
 	check(FileAccess.file_exists(main.db.custom_dir() + "/x_T1_3.png"), "批次匯入：卡圖存好")
 	var moth: Dictionary = CardDB.BEASTS["x_T1_3"]
-	check(moth.type == "fire" and moth.stage == 1 and moth.hp == 300 and moth.retreat == 0, "批次匯入：屬性併入、進化接上、HP 上限")
-	check(moth.attacks.size() == 2 and moth.attacks[0].cost.size() == CardDB.MAX_COST, "批次匯入：最多兩招、費用上限 4")
+	check(moth.type == "dark" and moth.stage == 1 and moth.hp == 300 and moth.retreat == 0, "批次匯入：屬性併入、進化接上、HP 上限")
+	check(moth.attacks.size() == 2 and moth.attacks[0].cost == ["dark", "fire", "any", "any", "any"], "批次匯入：最多兩招、費用照卡面")
 	check(moth.attacks[0].fx == "flip_plus" and moth.attacks[0].v == 60 and moth.attacks[1].fx == "energy_plus", "批次匯入：招式效果對應")
 	check(CardDB.BEASTS["x_T1_1"].type == "leaf" and CardDB.BEASTS["x_T1_1"].attacks[0].fx == "burn", "批次匯入：草屬性與中毒變灼傷")
-	check(CardDB.BEASTS["x_T1_4"].stage == 0 and CardDB.BEASTS["x_T1_4"].type == "rock", "批次匯入：找不到進化來源就當基礎")
+	check(CardDB.BEASTS["x_T1_4"].stage == 0 and CardDB.BEASTS["x_T1_4"].type == "metal", "批次匯入：找不到進化來源就當基礎")
 	check(CardDB.effect_of("x_T1_5") == "journal", "批次匯入：訓練家對應內建效果")
 	check(CardDB.can_evolve("x_T1_2", "x_T1_3"), "批次匯入：同名不同版本也能進化")
 	main.show_pack_editor(packs[0], "x_T1_3")
@@ -249,7 +249,7 @@ func _test_batch_import() -> void:
 	check(main._filter_ok("x_T1_1") and main._filter_ok("sproutbun") and not main._filter_ok("x_T1_3"), "篩選：自製卡歸到遊戲屬性")
 	main.edit_type = "Darkness"
 	check(main._filter_ok("x_T1_3") and not main._filter_ok("embertail"), "篩選：原始屬性")
-	main.edit_type = "fire"
+	main.edit_type = "Darkness"
 	main.edit_stage = 1
 	check(main._filter_ok("x_T1_3") and not main._filter_ok("embertail"), "篩選：屬性加階段")
 	main.edit_stage = -1

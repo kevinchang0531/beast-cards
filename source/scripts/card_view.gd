@@ -236,9 +236,10 @@ func _draw_full() -> void:
 		for t in CardDB.BEATS:
 			if CardDB.BEATS[t] == bd.type:
 				weak = t
-		_text("弱點", Vector2(14, 268), 40, 10, Color("333333"))
-		_energy_dot(weak, Vector2(48, 264), 6)
-		_text("×2", Vector2(56, 268), 30, 10, Color("333333"))
+		if weak != "":
+			_text("弱點", Vector2(14, 268), 40, 10, Color("333333"))
+			_energy_dot(weak, Vector2(48, 264), 6)
+			_text("×2", Vector2(56, 268), 30, 10, Color("333333"))
 		_text("撤退", Vector2(110, 268), 40, 10, Color("333333"))
 		for i in bd.retreat:
 			_energy_dot("any", Vector2(144 + i * 12, 264), 5)

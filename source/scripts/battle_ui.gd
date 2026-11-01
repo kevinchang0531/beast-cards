@@ -652,7 +652,7 @@ func _after_apply() -> void:
 			var tw := create_tween()
 			tw.tween_property(atk_view, "position:y", p0.y + (-30.0 if attack_ev.p == me else 30.0), 0.12)
 			tw.tween_property(atk_view, "position:y", p0.y, 0.15)
-		Audio.play("atk_" + str(attack_ev.type))
+		Audio.play("atk_" + (str(attack_ev.type) if attack_ev.type in CardDB.TYPES else "normal"))
 		await get_tree().create_timer(0.3).timeout
 		if def_view and int(attack_ev.dmg) > 0:
 			def_view.shake = 1.0
@@ -827,7 +827,8 @@ const RULES := """【目標】先擊倒對手 3 隻靈獸（拿到 3 顆★星�
 ・撤退 1 次：丟掉撤退費用的能量，和後備交換
 ・最後用戰鬥靈獸攻擊（需要的能量要夠），攻擊後回合結束。先攻第一回合不能攻擊。
 
-【屬性相剋】火 → 草 → 岩 → 雷 → 水 → 火，打被剋的屬性傷害 ×2。
+【屬性相剋】火 → 草 → 岩 → 雷 → 水 → 火，打被剋的屬性傷害 ×2。超、惡、鋼、龍、無色沒有相剋。
+【無色費用】招式的無色費用可以用任何能量付，混合費用要每種屬性都有。
 【狀態】灼傷：每回合開始受 10 傷害。麻痺：下回合不能攻擊和撤退。撤退或進化會解除。
 
 【操作】點手牌出牌（金框＝可以出），需要目標時再點自己的靈獸；滑鼠移到卡片上可在右邊看詳細內容；右鍵取消選擇。"""

@@ -5,10 +5,14 @@ extends RefCounted
 ## 屬性相剋（箭頭左邊打右邊兩倍傷害）：火 → 草 → 岩 → 雷 → 水 → 火
 
 const TYPES := ["fire", "water", "leaf", "thunder", "rock"]
-const TYPE_NAME := {"fire": "火", "water": "水", "leaf": "草", "thunder": "雷", "rock": "岩", "any": "無"}
+## 全部屬性：前 5 種有起始牌組和相剋，其餘給匯入卡用。靈獸也可以是 any（無色）；龍和無色沒有基本能量
+const ALL_TYPES := ["fire", "water", "leaf", "thunder", "rock", "psychic", "dark", "metal", "dragon"]
+const TYPE_NAME := {"fire": "火", "water": "水", "leaf": "草", "thunder": "雷", "rock": "岩", "any": "無",
+	"psychic": "超", "dark": "惡", "metal": "鋼", "dragon": "龍"}
 const TYPE_COLOR := {
 	"fire": Color("e8553a"), "water": Color("3a8ee8"), "leaf": Color("4cb84a"),
 	"thunder": Color("e8c22e"), "rock": Color("a0764a"), "any": Color("c8c8c8"),
+	"psychic": Color("b65ad6"), "dark": Color("4a4560"), "metal": Color("8fa3b0"), "dragon": Color("c89b3c"),
 }
 ## 剋制關係：BEATS[a] = 被 a 剋的屬性
 const BEATS := {"fire": "leaf", "leaf": "rock", "rock": "thunder", "thunder": "water", "water": "fire"}
@@ -101,6 +105,9 @@ const BASE_ENERGY := {
 	"e_leaf": {"name": "草能量", "type": "leaf"},
 	"e_thunder": {"name": "雷能量", "type": "thunder"},
 	"e_rock": {"name": "岩能量", "type": "rock"},
+	"e_psychic": {"name": "超能量", "type": "psychic"},
+	"e_dark": {"name": "惡能量", "type": "dark"},
+	"e_metal": {"name": "鋼能量", "type": "metal"},
 }
 
 ## kind：item 道具（每回合不限張）／support 支援（每回合 1 張）
@@ -181,7 +188,8 @@ static func set_custom(cards: Dictionary, art_dir: String) -> void:
 			custom_src[id] = str(c.get("src_type", ""))
 		match str(c.get("kind", "beast")):
 			"energy":
-				ENERGY[id] = {"name": str(c.name), "type": _safe_type(c.get("type"))}
+				var et := _safe_type(c.get("type"))
+				ENERGY[id] = {"name": str(c.name), "type": "fire" if et in ["dragon", "any"] else et}
 			"trainer":
 				var effect := str(c.get("effect", "potion"))
 				if not BASE_TRAINERS.has(effect):
@@ -212,7 +220,31 @@ static func _chain_stage(id: String) -> int:
 
 
 static func _safe_type(t) -> String:
-	return str(t) if str(t) in TYPES else "fire"
+	return str(t) if str(t) in ALL_TYPES or str(t) == "any" else "fire"
+
+
+## 招式費用：批次匯入的 cost 陣列逐項保留（雷＋鬥這種混合費用），其他卡照 n_type、n_any 算。
+## 龍和無色沒有基本能量，指定屬性的費用用任意能量付
+static func attack_cost(a: Dictionary, t: String) -> Array:
+	var cost: Array = []
+	if a.get("cost") is Array and not a.cost.is_empty():
+		for c in a.cost:
+			cost.append(str(c) if str(c) in ALL_TYPES and str(c) != "dragon" else "any")
+		return cost
+	var n_type := clampi(int(a.get("n_type", 1)), 0, MAX_COST)
+	var n_any := clampi(int(a.get("n_any", 0)), 0, MAX_COST - n_type)
+	for i in n_type:
+		cost.append("any" if t == "dragon" else t)
+	for i in n_any:
+		cost.append("any")
+	if cost.is_empty():
+		cost.append("any")
+	return cost
+
+
+## a 打 d 有沒有屬性相剋；新屬性沒有相剋關係
+static func beats(a: String, d: String) -> bool:
+	return BEATS.get(a, "") == d
 
 
 ## 把編輯畫面的定義轉成對戰引擎用的靈獸資料（JSON 讀回來的數字都是 float，這裡統一轉 int）
@@ -222,16 +254,7 @@ static func compile_beast(c: Dictionary) -> Dictionary:
 	for a in c.get("attacks", []):
 		if str(a.get("name", "")).strip_edges() == "":
 			continue
-		var n_type := clampi(int(a.get("n_type", 1)), 0, MAX_COST)
-		var n_any := clampi(int(a.get("n_any", 0)), 0, MAX_COST - n_type)
-		var cost: Array = []
-		for i in n_type:
-			cost.append(t)
-		for i in n_any:
-			cost.append("any")
-		if cost.is_empty():
-			cost.append("any")
-		var atk := {"name": str(a.name), "cost": cost, "dmg": clampi(int(a.get("dmg", 0)), 0, 300), "v": int(a.get("v", 0))}
+		var atk := {"name": str(a.name), "cost": attack_cost(a, t), "dmg": clampi(int(a.get("dmg", 0)), 0, 300), "v": int(a.get("v", 0))}
 		if str(a.get("fx", "")) != "":
 			atk.fx = str(a.fx)
 		attacks.append(atk)

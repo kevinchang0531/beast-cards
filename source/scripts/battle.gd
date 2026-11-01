@@ -11,7 +11,7 @@ extends RefCounted
 ## 位置編號 slot：0 = 戰鬥位置，1～4 = 後備第 1～4 隻。
 
 ## 批次匯入卡的效果版本：招式效果或對應規則改了就加 1，舊版本的存檔不能重播。內建卡的存檔沒有這欄
-const FX_VERSION := 1
+const FX_VERSION := 2    # 2：匯入卡用 10 屬性和混合費用
 static var last_error := ""    # from_save 回傳 null 時的原因
 
 var rng := RandomNumberGenerator.new()
@@ -167,13 +167,13 @@ func preview_damage(pi: int, n: int) -> int:
 		dmg += int(a.v) * clampi(b.energy.size() - a.cost.size(), 0, 2)
 	if dmg > 0:
 		dmg += players[pi].band
-		if CardDB.BEATS[beast_data(b).type] == beast_data(d).type:
+		if CardDB.beats(beast_data(b).type, beast_data(d).type):
 			dmg *= 2
 	return dmg
 
 
 func is_weak_to(defender: Dictionary, attacker: Dictionary) -> bool:
-	return CardDB.BEATS[beast_data(attacker).type] == beast_data(defender).type
+	return CardDB.beats(beast_data(attacker).type, beast_data(defender).type)
 
 
 # ---------- 合法動作 ----------
@@ -654,13 +654,14 @@ static func save_error(d: Dictionary) -> String:
 	if d.get("fx_ver") == null:
 		return "這場對戰存檔缺少效果版本，無法重播。"
 	var v := int(d.fx_ver)
-	if v != FX_VERSION:
+	if v < 1 or v > FX_VERSION:
 		return "這場對戰存檔是效果版本 %d，這個遊戲版本只支援版本 %d，無法重播。" % [v, FX_VERSION]
 	for deck in d.decks:
 		for id in deck:
 			if not CardDB.known(str(id)):
 				return "這場對戰用到的卡片「%s」已經不在了，無法重播。" % str(id)
-			if CardDB.is_imported(str(id)) and CardDB.fx_version(str(id)) != v:
+			# 舊版本的卡規則沒變，可以照舊重播；卡片升級過才對不上
+			if CardDB.is_imported(str(id)) and CardDB.fx_version(str(id)) > v:
 				return "卡片「%s」是效果版本 %d，和存檔的版本 %d 不同，無法重播。" % [CardDB.card_name(str(id)), CardDB.fx_version(str(id)), v]
 	return ""
 

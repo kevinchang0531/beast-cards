@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "attributes": [
+    {"id": "Grass", "name": "草", "gameKey": "leaf", "includedTypes": ["草", "蟲"], "hasBasicEnergy": true, "fallback": "leaf"},
+    {"id": "Fire", "name": "火", "gameKey": "fire", "includedTypes": ["火"], "hasBasicEnergy": true, "fallback": "fire"},
+    {"id": "Water", "name": "水", "gameKey": "water", "includedTypes": ["水", "冰"], "hasBasicEnergy": true, "fallback": "water"},
+    {"id": "Lightning", "name": "雷", "gameKey": "thunder", "includedTypes": ["電"], "hasBasicEnergy": true, "fallback": "thunder"},
+    {"id": "Fighting", "name": "鬥", "gameKey": "rock", "includedTypes": ["格鬥", "岩石", "地面"], "hasBasicEnergy": true, "fallback": "rock"},
+    {"id": "Psychic", "name": "超", "gameKey": "psychic", "includedTypes": ["超能力", "幽靈", "妖精"], "hasBasicEnergy": true, "fallback": "thunder"},
+    {"id": "Darkness", "name": "惡", "gameKey": "dark", "includedTypes": ["惡", "毒"], "hasBasicEnergy": true, "fallback": "fire"},
+    {"id": "Metal", "name": "鋼", "gameKey": "metal", "includedTypes": ["鋼"], "hasBasicEnergy": true, "fallback": "rock"},
+    {"id": "Dragon", "name": "龍", "gameKey": "dragon", "includedTypes": ["龍"], "hasBasicEnergy": false, "fallback": "water"},
+    {"id": "Colorless", "name": "無色", "gameKey": "any", "includedTypes": ["一般", "飛行"], "hasBasicEnergy": false, "fallback": "leaf"}
+  ]
+}

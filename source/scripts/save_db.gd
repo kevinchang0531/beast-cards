@@ -99,6 +99,8 @@ func load_profile(pname: String) -> Dictionary:
 		d.bio = ""
 	for deck in d.decks:
 		deck.deck_size = int(deck.get("deck_size", CardDB.DECK_SIZE))
+	for e in CardDB.BASE_ENERGY:
+		d.collection[e] = 99
 	purge_missing(d)
 	return d
 
@@ -273,6 +275,30 @@ func add_set_card(pack: Dictionary, id: String, def: Dictionary, img: Image) -> 
 
 
 ## 把 from_name 接到自製卡庫裡同名的卡（跨系列也算）；找不到進化來源就當基礎靈獸，回傳接上幾張
+## 還沒換成 10 屬性的舊匯入卡有幾張
+func old_attr_count() -> int:
+	var n := 0
+	for id in library.cards:
+		var c: Dictionary = library.cards[id]
+		if CardDB.is_imported(id) and int(c.get("fx_ver", 1)) < Battle.FX_VERSION and AttrRules.ATTRS.has(str(c.get("src_type", ""))):
+			n += 1
+	return n
+
+
+## 舊匯入卡依 src_type 換回原本的屬性。舊資料沒存原始費用，混合費用要重新匯入才有
+func migrate_attrs() -> int:
+	var n := 0
+	for id in library.cards:
+		var c: Dictionary = library.cards[id]
+		if CardDB.is_imported(id) and int(c.get("fx_ver", 1)) < Battle.FX_VERSION and AttrRules.ATTRS.has(str(c.get("src_type", ""))):
+			c.type = AttrRules.key_of(str(c.src_type))
+			c.fx_ver = Battle.FX_VERSION
+			n += 1
+	if n > 0:
+		save_library()
+	return n
+
+
 func link_evolutions() -> int:
 	var by_name := {}
 	for id in library.cards:
